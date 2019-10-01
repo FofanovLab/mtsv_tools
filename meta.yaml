@@ -1,0 +1,47 @@
+{% set name = "mtsv_tools" %}
+{% set version = "1.0.0" %}
+{% set sha256 = "2b50915fda23f9bc9c8170d82fa5255ef2c3954f0d6a5ea15649b119ff506d0c" %}
+
+
+package:
+  name: {{ name }}
+  version: {{ version }}
+
+source:
+  path: ./ 
+
+build:
+  number: 0
+
+requirements:
+  build:
+    - {{ compiler('c') }}
+  host:
+    - rust <1.36.0
+    - zlib
+  run:
+    - zlib
+  
+test:
+  commands:
+    - mtsv-build --help > /dev/null
+    - mtsv-chunk --help > /dev/null
+    - mtsv-tree-build --help > /dev/null
+    - mtsv-readprep --help > /dev/null
+    - mtsv-binner --help > /dev/null
+    - mtsv-collapse --help > /dev/null
+    - mtsv-signature --help > /dev/null
+
+
+
+about:
+  home: https://github.com/FofanovLab/mtsv_tools
+  license: MIT
+  license_file: LICENSE
+  license_family: MIT
+  summary: |
+    mtsv_tools contains core tools for metagenomic binning
+
+extra:
+  recipe_maintainers: tfursten
+    
