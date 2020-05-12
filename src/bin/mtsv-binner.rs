@@ -64,6 +64,11 @@ fn main() {
             .help("Set to override minimum number of seeds to perform alignment of a candidate \
                    site.")
             .default_value("2"))
+        .arg(Arg::with_name("MAX_HITS")
+            .long("max-hits")
+            .takes_value(true)
+            .help("Skip seeds with more than MAX_HITS hits.")
+            .default_value("20000"))
         .get_matches();
 
 
@@ -93,7 +98,7 @@ fn main() {
         let seed_size = match args.value_of("SEED_SIZE") {
             Some(s) => {
                 let seed_size = s.parse::<usize>().expect("Invalid seed size entered!");
-
+                info!("Seed size: {}", seed_size);
                 if seed_size < 16 {
                     warn!("Seed size may be small enough that it causes performance issues.");
                 } else if seed_size > 24 {
@@ -108,7 +113,7 @@ fn main() {
         let seed_gap = match args.value_of("SEED_GAP") {
             Some(s) => {
                 let seed_gap = s.parse::<usize>().expect("Invalid seed gap entered!");
-
+                info!("seed-gap: {}", seed_gap);
                 if seed_gap < 3 {
                     warn!("Seed gap may be small enough that it causes performance issues.");
                 } else if seed_gap > 10 {
@@ -123,7 +128,7 @@ fn main() {
         let min_seeds = match args.value_of("MIN_SEEDS") {
             Some(s) => {
                 let min_seeds = s.parse::<usize>().expect("Invalid min. # of seeds entered!");
-
+                info!("Min Seeds: {}", min_seeds);
                 if min_seeds < 2 {
                     warn!("Performance may be significantly slowed by aligning candidate sites \
                            with that few seeds found.");
@@ -135,6 +140,21 @@ fn main() {
                 min_seeds
             },
             None => panic!("Missing parameter: seed_gap"),
+        };
+
+        let max_hits = match args.value_of("MAX_HITS") {
+            Some(s) => {
+                let max_hits = s.parse::<usize>().expect("Invalid cutoff for max hits!");
+                info!("Max Hits: {}", max_hits);
+                if max_hits > 100000 {
+                    warn!("Max hits may be large enough to cause performance issues.");
+                } else if max_hits < 10000 {
+                    warn!("Max hits may be too small which can cause some alignments to be missed.");
+                } 
+                
+                max_hits
+            },
+            None => panic!("Missing parameter: max_hits"),
         };
 
         if results_path.is_none() {
@@ -149,7 +169,8 @@ fn main() {
                                                          edit_tolerance,
                                                          seed_size,
                                                          seed_gap,
-                                                         min_seeds) {
+                                                         min_seeds,
+                                                         max_hits) {
                 Ok(_) => 0,
                 Err(why) => {
                     error!("Error running query: {}", why);
