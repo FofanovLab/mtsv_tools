@@ -3,14 +3,14 @@
 mtsv-tools is a suite of core metagenomic binning and analysis tools. It attempts to accurately identify which species are present in a given DNA sample. It assumes that read fragments in samples will be in a "shotgun" or short read format, typically ~50-200 bases in length.
 
 ## Installation
-conda install mtsv-tools -c bioconda -c conda-forge
+conda install mtsv-tools -c bioconda 
 
 
 ## Building
 
 mtsv is built in Rust. You'll need:
 
-* `rustc` and `cargo` >= 1.8.0 < 1.36.0 ([rustup.rs](https://rustup.rs) is the easiest installation method)
+* `rustc` and `cargo` >= 1.29.0 < 1.36.0 ([rustup.rs](https://rustup.rs) is the easiest installation method)
 * a C compiler (tested with GCC and clang)
 
 ### Tests
