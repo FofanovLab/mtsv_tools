@@ -1,5 +1,6 @@
 
-language: c
+language: python
+python: "3.6"
 os: linux
 
 branches:
@@ -21,4 +22,10 @@ install:
   - conda config --set always_yes yes --set changeps1 no
   - conda update -q conda
   - conda config --add channels conda-forge
-  - test $TRAVIS_BRANCH = "master" && conda install conda-build && bash conda-recipe/conda_upload.sh
+  - test $TRAVIS_BRANCH = "master" && conda install conda-build && bash conda-recipe/conda_build.sh
+
+  # Create and activate the test environment
+  - conda create -q -n test-environment python=$TRAVIS_PYTHON_VERSION --file dev-requirements.yaml
+  - conda activate test-environment
+script:
+  cargo test
