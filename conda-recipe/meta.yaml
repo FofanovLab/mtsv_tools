@@ -1,14 +1,17 @@
 {% set name = "mtsv_tools" %}
-{% set version = "1.0.1" %}
+
 
 package:
   name: {{ name }}
-  version: {{ version }}
+  version: {{ environ['VERSION'] }}
 
 source:
-  path: ./ 
+  path: ../ 
 
 build:
+  script_env:
+     - VERSION
+     - CONDA_BLD_PATH
   number: 1
   skip: True # [osx]
 
