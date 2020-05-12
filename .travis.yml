@@ -21,4 +21,4 @@ install:
   - conda config --set always_yes yes --set changeps1 no
   - conda update -q conda
   - conda config --add channels conda-forge
-  - test $TRAVIS_BRANCH = "master" && conda install conda-build && bash conda-recipe/conda_upload.sh
+  - test $TRAVIS_BRANCH = "master" && conda install conda-build && bash conda-recipe/conda-upload.sh
