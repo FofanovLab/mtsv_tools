@@ -23,7 +23,7 @@ install:
   - conda update -q conda
   - conda config --add channels conda-forge
     # Create the test environment
-  - conda create -q -n test-environment python=$TRAVIS_PYTHON_VERSION --file dev-requirements.yaml
+  - conda create -q -n test-environment python=$TRAVIS_PYTHON_VERSION rust==1.35.0
 
   
   - test $TRAVIS_BRANCH = "master" && conda install conda-build && bash conda-recipe/conda_build.sh
