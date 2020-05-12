@@ -251,7 +251,8 @@ impl MGIndex {
                             edit_distance: usize,
                             seed_length: usize,
                             seed_gap: usize,
-                            min_seeds: usize)
+                            min_seeds: usize,
+                            max_hits: usize)
                             -> Vec<TaxId> {
 
         // we need to later compare for edit distance where N's won't match against reference N's
@@ -268,9 +269,6 @@ impl MGIndex {
             .step(seed_gap)                                 // skip over any in between seed gap
             .map(|i| (i, &sequence[i..i + seed_length]));   // create a reference into the query
 
-        // there are a few seeds which are SO prevalent they'll blow up memory usage if we don't
-        // filter them out. in practice they have little impact on quality of results
-        const SEED_FREQUENCY_TO_SKIP: usize = 100_000;
 
         // find all of the reference regions which we'll align against
         let reference_candidates = {
@@ -278,9 +276,10 @@ impl MGIndex {
             for (offset, seed) in seeds {
                 // find everywhere this seed occurs in the reference database
                 let interval = self.fmindex.backward_search(seed.iter());
-
-                // if this seed is SUPER common, just skip it
-                if interval.upper - interval.lower > SEED_FREQUENCY_TO_SKIP {
+                // there are a few seeds which are SO prevalent they'll blow up memory usage if we don't
+                // filter them out. in practice they have little impact on quality of results
+                // if this seed is greater than max_hits, just skip it
+                if interval.upper - interval.lower > max_hits {
                     continue;
                 }
 
@@ -331,8 +330,8 @@ impl MGIndex {
                 // the SW check is faster (w/ SIMD) than the min_edit_distance check, so if we're
                 // within an acceptable tolerance, now do the expensive check
                 let edits = aligner.min_edit_distance(&seq_no_n, cand_seq);
-
                 if edits as usize <= edit_distance {
+
                     matches.push(candidate.bin.tax_id);
                 }
             }
@@ -349,6 +348,7 @@ impl MGIndex {
                            read_len: usize,
                            edit_distance: usize)
                            -> Vec<ReferenceCandidate> {
+        
         seed_hits.sort();
 
         let mut curr_cand: Option<ReferenceCandidate> = None;
@@ -380,7 +380,6 @@ impl MGIndex {
                 curr_cand = ReferenceCandidate::new(sh, *curr_bin, self, read_len, edit_distance);
             }
         }
-
         candidates
     }
 
