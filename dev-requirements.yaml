@@ -1,2 +1,2 @@
 dependencies:
-  - rust==1.35
+  - rust=1.35
