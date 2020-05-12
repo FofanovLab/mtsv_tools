@@ -32,6 +32,9 @@ use stopwatch::Stopwatch;
 /// `seed_gap` controls how far apart the seeds pulled from the query read should be.
 ///
 /// `min_seeds` specifies how many seeds should be present in a portion of the reference genomes
+///
+/// 'max_hits' is a cutoff for skipping seeds with more than max_hits hits.
+///
 /// before performing an actual edit-sensitive alignment.
 pub fn get_and_write_matching_bin_ids(fasta_path: &str,
                                       index_path: &str,
@@ -40,7 +43,8 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
                                       edit_distance: u32,
                                       seed_size: usize,
                                       seed_gap: usize,
-                                      min_seeds: usize)
+                                      min_seeds: usize,
+                                      max_hits: usize)
                                       -> MtsvResult<()> {
 
     info!("Opening FASTA query file...");
@@ -95,7 +99,8 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
                                                  edit_distance as usize,
                                                  seed_size,
                                                  seed_gap,
-                                                 min_seeds);
+                                                 min_seeds,
+                                                 max_hits);
 
 
         // get the reverse complement
@@ -104,7 +109,8 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
                                                           edit_distance as usize,
                                                           seed_size,
                                                           seed_gap,
-                                                          min_seeds);
+                                                          min_seeds,
+                                                          max_hits);
 
         // unify the result sets
         let results = candidates.into_iter()
