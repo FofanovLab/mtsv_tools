@@ -22,14 +22,11 @@ install:
   - conda config --set always_yes yes --set changeps1 no
   - conda update -q conda
   - conda config --add channels conda-forge
-<<<<<<< HEAD
   - test $TRAVIS_BRANCH = "master" && conda install conda-build && bash conda-recipe/conda_build.sh
 
   # Create and activate the test environment
   - conda create -q -n test-environment python=$TRAVIS_PYTHON_VERSION --file dev-requirements.yaml
   - conda activate test-environment
+  
 script:
   cargo test
-=======
-  - test $TRAVIS_BRANCH = "master" && conda install conda-build && bash conda-recipe/conda-upload.sh
->>>>>>> 75dc864be86d0ded1d07a9da81a6811160f983ee
