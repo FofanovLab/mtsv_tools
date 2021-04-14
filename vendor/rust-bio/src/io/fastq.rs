@@ -121,22 +121,22 @@ impl Record {
 
     /// Return the id of the record.
     pub fn id(&self) -> Option<&str> {
-        self.header[1..].trim_right().splitn(2, ' ').next()
+        self.header[1..].trim_end().splitn(2, ' ').next()
     }
 
     /// Return descriptions if present.
     pub fn desc(&self) -> Option<&str> {
-        self.header[1..].trim_right().splitn(2, ' ').skip(1).next()
+        self.header[1..].trim_end().splitn(2, ' ').skip(1).next()
     }
 
     /// Return the sequence of the record.
     pub fn seq(&self) -> &[u8] {
-        self.seq.trim_right().as_bytes()
+        self.seq.trim_end().as_bytes()
     }
 
     /// Return the base qualities of the record.
     pub fn qual(&self) -> &[u8] {
-        self.qual.trim_right().as_bytes()
+        self.qual.trim_end().as_bytes()
     }
 
     /// Clear the record.

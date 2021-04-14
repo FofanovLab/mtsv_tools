@@ -70,7 +70,7 @@ impl<R: io::Read> Reader<R> {
             if self.line.is_empty() || self.line.starts_with('>') {
                 break;
             }
-            record.seq.push_str(&self.line.trim_right());
+            record.seq.push_str(&self.line.trim_end());
         }
 
         Ok(())
@@ -330,12 +330,12 @@ impl Record {
 
     /// Return the id of the record.
     pub fn id(&self) -> Option<&str> {
-        self.header.trim_right().splitn(2, ' ').next()
+        self.header.trim_end().splitn(2, ' ').next()
     }
 
     /// Return descriptions if present.
     pub fn desc(&self) -> Option<&str> {
-        self.header.trim_right().splitn(2, ' ').skip(1).next()
+        self.header.trim_end().splitn(2, ' ').skip(1).next()
     }
 
     /// Return the sequence of the record.
