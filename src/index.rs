@@ -195,12 +195,12 @@ impl<'rf> ReferenceCandidate<'rf> {
                     edit_distance: usize)
                     -> Result<(), ()> {
 
-
         let (ref_start, ref_end_excl) =
             match seed_hit.candidate_indices(&bin, read_len, edit_distance) {
                 Some(r) => r,
                 None => return Err(()),
             };
+
 
         // check to see if this is even in the same GI
         if *bin != self.bin {
@@ -209,7 +209,6 @@ impl<'rf> ReferenceCandidate<'rf> {
         // check to see if the candidates from the new seed hit overlaps with the current candidate
         else if (self.reference_start <= ref_start && ref_start < self.reference_end_excl) ||
                   (self.reference_start < ref_end_excl && ref_end_excl <= self.reference_end_excl) {
-
             // since there's overlap, combine the two
             self.reference_start = cmp::min(self.reference_start, ref_start);
             self.reference_end_excl = cmp::max(self.reference_end_excl, ref_end_excl);
@@ -304,6 +303,7 @@ impl MGIndex {
             refs
         };
 
+
         let mut matches = Vec::new();
 
         let mut aligner = Aligner::new();
@@ -336,7 +336,6 @@ impl MGIndex {
                 }
             }
         }
-
         matches
     }
 
@@ -359,25 +358,37 @@ impl MGIndex {
         let mut curr_bin = bin_iter.next().unwrap();
 
         for &mut sh in seed_hits {
+
             // if the site is ahead of the current bin, we need to advance the bin
-            while curr_bin.end < sh.reference_offset {
+            while curr_bin.end <= sh.reference_offset {
                 curr_bin = bin_iter.next().unwrap();
+
             }
-
             if let Some(mut cand) = curr_cand {
-
                 if let Ok(()) = cand.add_seed_hit(sh, curr_bin, read_len, edit_distance) {
                     curr_cand = Some(cand);
+                    // last_cand = curr_cand;
                 } else {
                     // if it wasn't added, it means that this seed hit is now past our current bin
+                    // or don't overlap in the same bin.
                     // check if candidate has enough seeds, if so add to ref, set cand to None
                     if cand.num_seeds >= min_seeds {
                         candidates.push(cand);
                     }
-                    curr_cand = None;
+                    // curr_cand = None;
+                    // Save the current seedhit as new reference candidate
+                    curr_cand = ReferenceCandidate::new(sh, *curr_bin, self, read_len, edit_distance);
                 }
             } else {
                 curr_cand = ReferenceCandidate::new(sh, *curr_bin, self, read_len, edit_distance);
+            }
+
+            
+        }
+        // Add last 
+        if curr_cand.is_some() {
+            if curr_cand.unwrap().num_seeds >= min_seeds {
+                candidates.push(curr_cand.unwrap());
             }
         }
         candidates
@@ -406,6 +417,8 @@ impl MGIndex {
             }
         }
 
+
+
         // convert whole reference sequence to DNA5 alphabet
         for b in &mut seq {
             match *b {
@@ -418,10 +431,10 @@ impl MGIndex {
                 _ => *b = b'N',
             }
         }
-
         // suffix array requires a lexicographically smallest sentinel
         seq.push(b'$');
         seq.shrink_to_fit();
+
         info!("All reference sequences concatenated and boundaries recorded.");
 
         let alphabet = alphabets::dna::n_alphabet();
