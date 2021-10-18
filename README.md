@@ -1,5 +1,5 @@
 [![Build Status](https://travis-ci.com/FofanovLab/mtsv_tools.svg?branch=master)](https://travis-ci.com/FofanovLab/mtsv_tools)
-
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/mtsv-tools/badges/installer/conda.svg)](https://conda.anaconda.org/bioconda)
 # mtsv-tools
 
 mtsv-tools is a suite of core metagenomic binning and analysis tools. It attempts to accurately identify which species are present in a given DNA sample. It assumes that read fragments in samples will be in a "shotgun" or short read format, typically ~50-200 bases in length.
