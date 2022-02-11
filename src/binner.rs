@@ -1,7 +1,7 @@
 //! The metagenomic binner for mtsv (note: actual lookups in `index`). Manages parallel execution
 //! of queries along with writing results.
 
-use bio::alphabets::dna::RevComp;
+use bio::alphabets::dna::revcomp;
 use bio::io::fasta;
 use cue::pipeline;
 
@@ -65,6 +65,8 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
 
     let timer = Stopwatch::start_new();
 
+
+
     pipeline("taxonomic binning",
              num_threads,
              reader.records(),
@@ -78,7 +80,6 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
             },
         };
 
-        let revcomp = RevComp::new();
 
         // convert any lowercase items to uppercase (a <-> A isn't a SNP)
         let seq_all_caps = record.seq()
@@ -104,7 +105,7 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
 
 
         // get the reverse complement
-        let rev_comp_seq = revcomp.get(&seq_all_caps);
+        let rev_comp_seq = revcomp(&seq_all_caps);
         let rev_comp_candidates = filter.matching_tax_ids(&rev_comp_seq,
                                                           edit_distance as usize,
                                                           seed_size,
@@ -117,7 +118,7 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
             .chain(rev_comp_candidates.into_iter())
             .collect::<BTreeSet<_>>();
 
-        (record.header().to_owned(), results)
+        (record.id().to_owned(), results)
     },
              |(header, matches)| {
         // again, if we can't write to the results file, just report it and bail

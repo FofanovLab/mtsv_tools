@@ -90,16 +90,16 @@ pub fn process_read(seq: &[u8],
                     config: &PrepConfig)
                     -> Vec<Vec<u8>> {
 
-    let new_start = match config.adapters {
-        Some(ref adapters) => {
-            let tolerance = config.adapter_tolerance.unwrap();
-            first_non_adapter_char(seq, adapters, tolerance)
-        },
-        None => 0,
-    };
+    // let new_start = match config.adapters {
+    //     Some(ref adapters) => {
+    //         let tolerance = config.adapter_tolerance.unwrap();
+    //         first_non_adapter_char(seq, adapters, tolerance)
+    //     },
+    //     None => 0,
+    // };
 
-    let seq = &seq[new_start..];
-    let qual = &qual[new_start..];
+    // let seq = &seq[new_start..];
+    // let qual = &qual[new_start..];
 
     let trim_len = match config.trim {
         TrimType::LcdFirstN(l) => l,

@@ -1,11 +1,10 @@
 //! Helper functions for serialization & deserialization.
 
-use bincode::SizeLimit;
-use bincode::rustc_serialize::{decode_from, encode_into};
+use serde::{Serialize, Deserialize};
+use bincode::{deserialize_from, serialize_into};
 use bio::io::fasta;
 use error::*;
 use index::{Database, TaxId};
-use rustc_serialize::{Decodable, Encodable};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io;
@@ -15,22 +14,22 @@ use util::parse_read_header;
 
 /// Parse an arbitrary `Decodable` type from a file path.
 pub fn from_file<T>(p: &str) -> MtsvResult<T>
-    where T: Decodable
+    where T: serde::de::DeserializeOwned
 {
 
     let f = try!(File::open(Path::new(p)));
     let mut reader = BufReader::new(f);
-    Ok(try!(decode_from(&mut reader, SizeLimit::Infinite)))
+    Ok(try!(deserialize_from(&mut reader)))
 }
 
 /// Write an arbitrary `Encodable` type to a file path.
 pub fn write_to_file<T>(t: &T, p: &str) -> MtsvResult<()>
-    where T: Encodable
+    where T: Serialize
 {
 
     let f = try!(File::create(Path::new(p)));
     let mut writer = BufWriter::new(f);
-    Ok(try!(encode_into(t, &mut writer, SizeLimit::Infinite)))
+    Ok(try!(serialize_into(&mut writer, t)))
 }
 
 /// Parse a FASTA database into a single map of all taxonomy IDs.
@@ -43,7 +42,7 @@ pub fn parse_fasta_db<R>(records: R) -> MtsvResult<Database>
     for record in records {
         let record = try!(record);
 
-        let (gi, tax_id) = try!(parse_read_header(record.header()));
+        let (gi, tax_id) = try!(parse_read_header(record.id()));
 
         let sequences = taxon_map.entry(tax_id).or_insert_with(|| vec![]);
         sequences.push((gi, record.seq().to_vec()));

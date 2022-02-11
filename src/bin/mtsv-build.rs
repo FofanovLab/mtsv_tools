@@ -33,11 +33,15 @@ fn main() {
         .arg(Arg::with_name("VERBOSE")
             .short("v")
             .help("Include this flag to trigger debug-level logging."))
+        .arg(Arg::with_name("SA_SAMPLE_RATE")
+            .long("sa-sample")
+            .takes_value(true)
+            .help("Suffix array sampling rate. If sampling rate is k, every k-th entry will be kept.")
+            .default_value("1024"))
         .arg(Arg::with_name("FM_SAMPLE_INTERVAL")
             .long("sample-interval")
             .takes_value(true)
-            .help("Sampling interval for index generation. Smaller = more memory usage, \
-                   slightly  faster queries. Larger = less memory usage slightly slower queries.")
+            .help("BWT occurance sampling rate. If sample interval is k, every k-th entry will be kept.")
             .default_value("32"))
         .get_matches();
 
@@ -59,12 +63,17 @@ fn main() {
             None => unreachable!(),
         };
 
+        let sa_interval = match args.value_of("SA_SAMPLE_RATE") {
+            Some(s) => s.parse::<usize>().expect("Invalid suffix array sample interval entered!"),
+            None => unreachable!(),
+        };
+
         debug!("Opening FASTA database file...");
         let records = fasta::Reader::from_file(Path::new(fasta_path))
             .expect("Unable to open FASTA database for parsing.")
             .records();
 
-        match builder::build_and_write_index(records, index_path, fm_index_interval) {
+        match builder::build_and_write_index(records, index_path, fm_index_interval, sa_interval) {
             Ok(_) => {
                 info!("Done building and writing index!");
                 0
