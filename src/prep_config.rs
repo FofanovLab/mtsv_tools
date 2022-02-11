@@ -1,6 +1,6 @@
 //! Configuration for readprep.
 
-use bio::alphabets::dna::RevComp;
+use bio::alphabets::dna::revcomp;
 use bio::io::fastq;
 use bio::io::fastq::Reader;
 use clap::{App, Arg, ArgGroup, ArgMatches};
@@ -9,8 +9,9 @@ use error::MtsvResult;
 use std::cmp::min;
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader};
 use std::path::{Path, PathBuf};
+use bio::io::fastq::FastqRead;
 
 /// The configuration for a particular readprep run.
 #[derive(Debug, Eq, PartialEq, RustcEncodable)]
@@ -22,11 +23,11 @@ pub struct PrepConfig {
     /// The number of low-quality bases to tolerate, if filtering by quality.
     pub quality_threshold: Option<usize>,
     /// The adapters to check for at the beginning of sequences, if filtering adapters.
-    pub adapters: Option<HashSet<Vec<u8>>>,
-    /// The number of adapter-matching bases to ignore at the beginning of a sequence, if filtering
-    /// adapters.
-    pub adapter_tolerance: Option<usize>,
-    /// The number of threads to use for parallel execution.
+    // pub adapters: Option<HashSet<Vec<u8>>>,
+    // /// The number of adapter-matching bases to ignore at the beginning of a sequence, if filtering
+    // /// adapters.
+    // pub adapter_tolerance: Option<usize>,
+    // /// The number of threads to use for parallel execution.
     pub num_threads: usize,
     /// The input FASTQ files, along with the metadata read about them.
     pub infiles: Vec<(PathBuf, FastqMetadata)>,
@@ -115,16 +116,16 @@ pub fn read_fastq_metadata(p: &Path) -> MtsvResult<FastqMetadata> {
 }
 
 /// Generate a list of adapters to check against from a given path.
-pub fn read_adapters(f: &Path, tolerance: usize) -> MtsvResult<HashSet<Vec<u8>>> {
-    let f = try!(File::open(f));
-    let mut rdr = BufReader::new(f);
-    let mut buf = String::new();
+// pub fn read_adapters(f: &Path, tolerance: usize) -> MtsvResult<HashSet<Vec<u8>>> {
+//     let f = try!(File::open(f));
+//     let mut rdr = BufReader::new(f);
+//     let mut buf = String::new();
 
-    try!(rdr.read_to_string(&mut buf));
+//     try!(rdr.read_to_string(&mut buf));
 
-    Ok(subadapters(&buf.lines().map(|l| l.trim().as_bytes()).collect::<Vec<_>>(),
-                   tolerance))
-}
+//     Ok(subadapters(&buf.lines().map(|l| l.trim().as_bytes()).collect::<Vec<_>>(),
+//                    tolerance))
+// }
 
 /// Take a list of adapters, and generate a set of "subadapters" within a certain tolerance.
 ///
@@ -143,25 +144,25 @@ pub fn read_adapters(f: &Path, tolerance: usize) -> MtsvResult<HashSet<Vec<u8>>>
 ///
 /// Which would then be used for matching against the initial N bases of a sequence to determine
 /// whether it had been contaminated by an adapter.
-pub fn subadapters(full_adapters: &[&[u8]], tolerance: usize) -> HashSet<Vec<u8>> {
-    let mut adapters = HashSet::new();
-    let revcomp = RevComp::new();
+// pub fn subadapters(full_adapters: &[&[u8]], tolerance: usize) -> HashSet<Vec<u8>> {
+//     let mut adapters = HashSet::new();
+    
 
-    for a in full_adapters {
-        let rev = revcomp.get(a);
+//     for a in full_adapters {
+//         let rev = revcomp(a);
 
-        // generate all subvecs of the adapter and revcomp and insert them into the hashset
-        for check_len in tolerance..(a.len() + 1) {
-            let subadapter = Vec::from(&a[a.len() - check_len..]);
-            adapters.insert(subadapter);
+//         // generate all subvecs of the adapter and revcomp and insert them into the hashset
+//         for check_len in tolerance..(a.len() + 1) {
+//             let subadapter = Vec::from(&a[a.len() - check_len..]);
+//             adapters.insert(subadapter);
 
-            let rev_subadapter = Vec::from(&rev[a.len() - check_len..]);
-            adapters.insert(rev_subadapter);
-        }
-    }
+//             let rev_subadapter = Vec::from(&rev[a.len() - check_len..]);
+//             adapters.insert(rev_subadapter);
+//         }
+//     }
 
-    adapters
-}
+//     adapters
+// }
 
 /// Parse the command line configuration from clap.
 pub fn parse_config(args: &ArgMatches) -> MtsvResult<PrepConfig> {
@@ -188,19 +189,19 @@ pub fn parse_config(args: &ArgMatches) -> MtsvResult<PrepConfig> {
         (Some(_), None) => panic!("Quality minimum was specified but not # bases threshold."),
     };
 
-    let (adapters, adapter_tolerance) = match (args.value_of("ADAPTER_FILE"),
-                                               args.value_of("ADAPTER_TOLERANCE")) {
-        (Some(f), Some(t)) => {
-            let tolerance = t.parse::<usize>().expect("Invalid adapter tolerance provided");
+    // let (adapters, adapter_tolerance) = match (args.value_of("ADAPTER_FILE"),
+    //                                            args.value_of("ADAPTER_TOLERANCE")) {
+    //     (Some(f), Some(t)) => {
+    //         let tolerance = t.parse::<usize>().expect("Invalid adapter tolerance provided");
 
-            let adapters = try!(read_adapters(&Path::new(f), tolerance));
+    //         let adapters = try!(read_adapters(&Path::new(f), tolerance));
 
-            (Some(adapters), Some(tolerance))
-        },
-        (None, None) => (None, None),
-        (None, Some(_)) => panic!("Adapter tolerance provided, but not an adapter file."),
-        (Some(_), None) => panic!("Adapter file provided, but not an adapter tolerance."),
-    };
+    //         (Some(adapters), Some(tolerance))
+    //     },
+    //     (None, None) => (None, None),
+    //     (None, Some(_)) => panic!("Adapter tolerance provided, but not an adapter file."),
+    //     (Some(_), None) => panic!("Adapter file provided, but not an adapter tolerance."),
+    // };
 
     let outfile = PathBuf::from(args.value_of("FASTA").unwrap());
 
@@ -234,8 +235,8 @@ pub fn parse_config(args: &ArgMatches) -> MtsvResult<PrepConfig> {
         trim: trim,
         min_quality: quality_min,
         quality_threshold: quality_threshold,
-        adapters: adapters,
-        adapter_tolerance: adapter_tolerance,
+        // adapters: adapters,
+        // adapter_tolerance: adapter_tolerance,
         num_threads: num_threads,
         infiles: infiles,
         outfile: outfile,
@@ -274,16 +275,16 @@ pub fn prep_cli_app() -> App<'static, 'static> {
             .long("segment")
             .help("Enable SEG trim mode (takes subsequent N length subsequences of each read).")
             .takes_value(true))
-        .arg(Arg::with_name("ADAPTER_FILE")
-            .long("adapters")
-            .help("Path to file containing adapters, one per line.")
-            .takes_value(true)
-            .requires("ADAPTER_TOLERANCE"))
-        .arg(Arg::with_name("ADAPTER_TOLERANCE")
-            .long("adapter-tolerance")
-            .help("Number of adapter characters to tolerate at start of reads.")
-            .takes_value(true)
-            .requires("ADAPTER_FILE"))
+        // .arg(Arg::with_name("ADAPTER_FILE")
+        //     .long("adapters")
+        //     .help("Path to file containing adapters, one per line.")
+        //     .takes_value(true)
+        //     .requires("ADAPTER_TOLERANCE"))
+        // .arg(Arg::with_name("ADAPTER_TOLERANCE")
+        //     .long("adapter-tolerance")
+        //     .help("Number of adapter characters to tolerate at start of reads.")
+        //     .takes_value(true)
+        //     .requires("ADAPTER_FILE"))
         .arg(Arg::with_name("QUALITY_MIN")
             .long("quality_min")
             .help("Minimum FASTQ quality to tolerate per base.")
@@ -336,8 +337,8 @@ mod test {
             num_threads: 4,
             min_quality: None,
             quality_threshold: None,
-            adapter_tolerance: None,
-            adapters: None,
+            // adapter_tolerance: None,
+            // adapters: None,
             outfile: PathBuf::from("/dev/null"),
             infiles: vec![
                 (PathBuf::from("tests/prep/sample1.fastq"),
@@ -401,26 +402,26 @@ mod test {
         assert_eq!(parsed, expected);
     }
 
-    #[test]
-    fn test_subadapters() {
-        let expected = vec!["AAG",
-                            "GAAG",
-                            "GGAAG",
-                            "CGGAAG",
-                            "TCGGAAG",
-                            "ATCGGAAG",
-                            "GATCGGAAG",
-                            "ATC",
-                            "GATC",
-                            "CGATC",
-                            "CCGATC",
-                            "TCCGATC",
-                            "TTCCGATC",
-                            "CTTCCGATC"];
+    // #[test]
+    // fn test_subadapters() {
+    //     let expected = vec!["AAG",
+    //                         "GAAG",
+    //                         "GGAAG",
+    //                         "CGGAAG",
+    //                         "TCGGAAG",
+    //                         "ATCGGAAG",
+    //                         "GATCGGAAG",
+    //                         "ATC",
+    //                         "GATC",
+    //                         "CGATC",
+    //                         "CCGATC",
+    //                         "TCCGATC",
+    //                         "TTCCGATC",
+    //                         "CTTCCGATC"];
 
-        let expected = expected.into_iter().map(|a| Vec::from(a)).collect::<HashSet<Vec<u8>>>();
-        let found = read_adapters(&Path::new("tests/prep/adapter.small"), 3).unwrap();
+    //     let expected = expected.into_iter().map(|a| Vec::from(a)).collect::<HashSet<Vec<u8>>>();
+    //     let found = read_adapters(&Path::new("tests/prep/adapter.small"), 3).unwrap();
 
-        assert_eq!(expected, found);
-    }
+    //     assert_eq!(expected, found);
+    // }
 }

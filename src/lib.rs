@@ -21,6 +21,7 @@
 #[macro_use]
 extern crate log;
 
+extern crate anyhow;
 extern crate bincode;
 extern crate bio;
 extern crate chrono;
@@ -32,6 +33,7 @@ extern crate itertools;
 extern crate rustc_serialize;
 extern crate ssw;
 extern crate stopwatch;
+extern crate serde;
 
 #[cfg(test)]
 extern crate mktemp;
@@ -53,5 +55,4 @@ pub mod index;
 pub mod io;
 pub mod prep;
 pub mod prep_config;
-pub mod tax_tree;
 pub mod util;

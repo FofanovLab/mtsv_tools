@@ -1,34 +1,36 @@
 //! The core metagenomic index used for queries.
 
 use align::Aligner;
-
 use bio::alphabets;
-use bio::data_structures::bwt::bwt;
-use bio::data_structures::fmindex::FMIndex;
-use bio::data_structures::suffix_array::{SuffixArray, suffix_array};
+use bio::data_structures::bwt::{bwt, less, Less, Occ, BWT};
+use bio::data_structures::fmindex::{BackwardSearchResult, FMIndex, FMIndexable};
+use bio::data_structures::suffix_array::{suffix_array, SuffixArray, SampledSuffixArray};
+
+use serde::{Serialize, Deserialize};
+use bincode;
 use itertools::Itertools;
 use ssw::{IDENT_W_PENALTY_NO_N_MATCH, Profile};
 use std::cmp;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::hash::{Hash, Hasher};
+use std::hash::{Hash};
 use std::collections::hash_map::DefaultHasher;
 use std::num::ParseIntError;
 use std::str;
 use std::u32;
 
 /// Tuple struct to ensure GI/accession numbers don't get accidentally handled as tax IDs.
-#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, RustcEncodable, RustcDecodable, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize, Debug)]
 pub struct TaxId(pub u32);
 
 /// Tuple struct to ensure taxonomic IDs don't get accidentally handled as GI/accession numbers.
-#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, RustcEncodable, RustcDecodable, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize, Debug)]
 pub struct Gi(pub u32);
 
 /// Metadata about a region of the index, corresponding to a single sequence/GI/accession in the
 /// original FASTA database file.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, RustcDecodable, RustcEncodable)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
 struct Bin {
     gi: Gi,
     tax_id: TaxId,
@@ -39,23 +41,23 @@ struct Bin {
 /// Metagenomic index comprised of reference sequences concatenated together, an FM Index over the
 /// concatenated sequences, and the metadata Bins to allow mapping absolute sequence offsets back
 /// to GI/accession numbers and taxonomic IDs.
-#[derive(Eq, Hash, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Serialize, Deserialize)]
 pub struct MGIndex {
-    fmindex: FMIndex,
+    fmindex: FMIndex<BWT, Less, Occ>,
     sequences: Sequence,
     bins: Vec<Bin>,
-    suffix_array: SuffixArray,
+    suffix_array: SampledSuffixArray<BWT, Less, Occ>,
 }
 
-impl Debug for MGIndex {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        let mut hasher = DefaultHasher::new();
+// impl Debug for MGIndex {
+//     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+//         let mut hasher = DefaultHasher::new();
 
-        self.hash(&mut hasher);
+//         self.hash(&mut hasher);
 
-        write!(f, "MGIndex {{ id: {}}}", hasher.finish())
-    }
-}
+//         write!(f, "MGIndex {{ id: {}}}", hasher.finish())
+//     }
+// }
 
 impl str::FromStr for TaxId {
     type Err = ParseIntError;
@@ -135,7 +137,7 @@ impl SeedHit {
 
 /// A region of the reference sequences against which we may perform approximate alignment. Gets
 /// expanded by adding successive `SeedHit`s.
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone)]
 struct ReferenceCandidate<'rf> {
     reference_start: usize,
     reference_end_excl: usize,
@@ -144,17 +146,7 @@ struct ReferenceCandidate<'rf> {
     index: &'rf MGIndex,
 }
 
-impl<'rf> Debug for ReferenceCandidate<'rf> {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        write!(f,
-               "ReferenceCandidate {{ start: {}, end: {}, bin: {:?}, num_seeds: {}, index: {:?}}}",
-               self.reference_start,
-               self.reference_end_excl,
-               self.bin,
-               self.num_seeds,
-               self.index)
-    }
-}
+
 
 impl<'rf> ReferenceCandidate<'rf> {
     /// Initialize a reference candidate with its first seed hit.
@@ -278,14 +270,29 @@ impl MGIndex {
                 // there are a few seeds which are SO prevalent they'll blow up memory usage if we don't
                 // filter them out. in practice they have little impact on quality of results
                 // if this seed is greater than max_hits, just skip it
-                if interval.upper - interval.lower > max_hits {
+                
+                let mut interval_upper = 0;
+                let mut interval_lower = 0;
+                let positions = match interval {
+                    BackwardSearchResult::Complete(sai) => {
+                        interval_upper = sai.upper;
+                        interval_lower = sai.lower;
+                        sai.occ(&self.suffix_array)
+                    }
+                    BackwardSearchResult::Partial(sai, _l) => sai.occ(&self.suffix_array),
+                    BackwardSearchResult::Absent => Vec::<usize>::new()
+                };
+
+
+                if (interval_upper - interval_lower) > max_hits {
                     continue;
                 }
-
+                
+                
                 // track a new SeedHit for each value in ther suffix array interval
-                bin_locations.extend((interval.lower..interval.upper).map(|i| {
+                bin_locations.extend((interval_lower..interval_upper).map(|i| {
                     SeedHit {
-                        reference_offset: self.suffix_array[i],
+                        reference_offset: positions[i],
                         query_offset: offset,
                     }
                 }));
@@ -440,22 +447,31 @@ impl MGIndex {
         let alphabet = alphabets::dna::n_alphabet();
 
         info!("Building suffix array...");
-        let suffix_array = suffix_array(&seq);
+        let sa = suffix_array(&seq);
         info!("Suffix array constructed.");
 
         info!("Constructing Burrows-Wheeler Transform...");
-        let bwt = bwt(&seq, &suffix_array);
+        let bwt_sa = bwt(&seq, &sa);
         info!("BWT constructed.");
 
+        let less_sa = less(&bwt_sa, &alphabet);
+        let occ = Occ::new(&bwt_sa, sample_interval, &alphabet);
+
+        let sampled_suffix_array = sa.sample(&seq, bwt_sa, less_sa, occ, 32);
+        
+        let bwt_fm = bwt(&seq, &sa);
+        let less = less(&bwt_fm, &alphabet);
+        let occ = Occ::new(&bwt_fm, sample_interval, &alphabet);
         info!("Constructing FM Index from SA and BWT...");
-        let fmindex = FMIndex::new(bwt, sample_interval, &alphabet);
+        let fmindex = FMIndex::new(bwt_fm, less, occ);
         info!("FMIndex constructed.");
 
+        
         MGIndex {
             sequences: seq,
             fmindex: fmindex,
             bins: bins,
-            suffix_array: suffix_array,
+            suffix_array: sampled_suffix_array,
         }
     }
 }
