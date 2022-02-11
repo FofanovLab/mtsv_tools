@@ -13,14 +13,15 @@ use std::io;
 /// parsing.
 pub fn build_and_write_index<R>(records: R,
                                 index_path: &str,
-                                sample_interval: u32)
+                                sample_interval: u32,
+                                suffix_sample: usize,)
                                 -> MtsvResult<()>
     where R: Iterator<Item = io::Result<fasta::Record>>
 {
     let taxon_map = try!(parse_fasta_db(records));
 
     info!("File parsed, building index...");
-    let index = MGIndex::new(taxon_map, sample_interval);
+    let index = MGIndex::new(taxon_map, sample_interval, suffix_sample);
 
     info!("Writing index to file...");
     try!(write_to_file(&index, index_path));

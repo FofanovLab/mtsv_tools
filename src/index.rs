@@ -270,7 +270,7 @@ impl MGIndex {
                 // there are a few seeds which are SO prevalent they'll blow up memory usage if we don't
                 // filter them out. in practice they have little impact on quality of results
                 // if this seed is greater than max_hits, just skip it
-                
+
                 let mut interval_upper = 0;
                 let mut interval_lower = 0;
                 let positions = match interval {
@@ -287,12 +287,13 @@ impl MGIndex {
                 if (interval_upper - interval_lower) > max_hits {
                     continue;
                 }
-                
-                
+
+
+
                 // track a new SeedHit for each value in ther suffix array interval
-                bin_locations.extend((interval_lower..interval_upper).map(|i| {
+                bin_locations.extend(positions.iter().map(|i| {
                     SeedHit {
-                        reference_offset: positions[i],
+                        reference_offset: *i,
                         query_offset: offset,
                     }
                 }));
@@ -403,7 +404,7 @@ impl MGIndex {
 
     /// Construct a new MGIndex from a series of reference sequences, concatenating all reference
     /// sequences and recording sequence boundaries and other metadata.
-    pub fn new(reference: Database, sample_interval: u32) -> Self {
+    pub fn new(reference: Database, sample_interval: u32, suffix_sample: usize) -> Self {
         info!("Concatenating all reference sequences and recording boundaries...");
 
         // concatenate all of the sequences, recording a new bin for each sequence
@@ -457,7 +458,7 @@ impl MGIndex {
         let less_sa = less(&bwt_sa, &alphabet);
         let occ = Occ::new(&bwt_sa, sample_interval, &alphabet);
 
-        let sampled_suffix_array = sa.sample(&seq, bwt_sa, less_sa, occ, 32);
+        let sampled_suffix_array = sa.sample(&seq, bwt_sa, less_sa, occ, suffix_sample);
         
         let bwt_fm = bwt(&seq, &sa);
         let less = less(&bwt_fm, &alphabet);

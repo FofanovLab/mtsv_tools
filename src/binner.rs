@@ -65,6 +65,8 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
 
     let timer = Stopwatch::start_new();
 
+
+
     pipeline("taxonomic binning",
              num_threads,
              reader.records(),
