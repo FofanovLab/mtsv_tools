@@ -43,7 +43,6 @@ struct Bin {
 /// to GI/accession numbers and taxonomic IDs.
 #[derive(Serialize, Deserialize)]
 pub struct MGIndex {
-    fmindex: FMIndex<BWT, Less, Occ>,
     sequences: Sequence,
     bins: Vec<Bin>,
     suffix_array: SampledSuffixArray<BWT, Less, Occ>,
@@ -260,13 +259,15 @@ impl MGIndex {
             .step(seed_gap)                                 // skip over any in between seed gap
             .map(|i| (i, &sequence[i..i + seed_length]));   // create a reference into the query
 
-
+        // build fm index
+        let fmindex = FMIndex::new(
+            self.suffix_array.bwt(), self.suffix_array.less(), self.suffix_array.occ());
         // find all of the reference regions which we'll align against
         let reference_candidates = {
             let mut bin_locations = Vec::new();
             for (offset, seed) in seeds {
                 // find everywhere this seed occurs in the reference database
-                let interval = self.fmindex.backward_search(seed.iter());
+                let interval = fmindex.backward_search(seed.iter());
                 // there are a few seeds which are SO prevalent they'll blow up memory usage if we don't
                 // filter them out. in practice they have little impact on quality of results
                 // if this seed is greater than max_hits, just skip it
@@ -452,25 +453,18 @@ impl MGIndex {
         info!("Suffix array constructed.");
 
         info!("Constructing Burrows-Wheeler Transform...");
-        let bwt_sa = bwt(&seq, &sa);
+        let bwt = bwt(&seq, &sa);
         info!("BWT constructed.");
 
-        let less_sa = less(&bwt_sa, &alphabet);
-        let occ = Occ::new(&bwt_sa, sample_interval, &alphabet);
-
-        let sampled_suffix_array = sa.sample(&seq, bwt_sa, less_sa, occ, suffix_sample);
+        let less = less(&bwt, &alphabet);
+        let occ = Occ::new(&bwt, sample_interval, &alphabet);
         
-        let bwt_fm = bwt(&seq, &sa);
-        let less = less(&bwt_fm, &alphabet);
-        let occ = Occ::new(&bwt_fm, sample_interval, &alphabet);
-        info!("Constructing FM Index from SA and BWT...");
-        let fmindex = FMIndex::new(bwt_fm, less, occ);
-        info!("FMIndex constructed.");
-
+        info!("Sampling suffix array at {}", suffix_sample);
+        let sampled_suffix_array = sa.sample(&seq, bwt, less, occ, suffix_sample);
+        info!("Sampled suffix array constructed");
         
         MGIndex {
             sequences: seq,
-            fmindex: fmindex,
             bins: bins,
             suffix_array: sampled_suffix_array,
         }
