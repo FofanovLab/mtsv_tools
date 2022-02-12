@@ -95,6 +95,9 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
                 }
             })
             .collect::<Vec<u8>>();
+        
+        
+
 
         let candidates = filter.matching_tax_ids(&seq_all_caps,
                                                  edit_distance as usize,
