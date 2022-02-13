@@ -45,7 +45,7 @@ struct Bin {
 pub struct MGIndex {
     sequences: Sequence,
     bins: Vec<Bin>,
-    suffix_array: SampledSuffixArray<BWT, Less, Occ>,
+    pub suffix_array: SampledSuffixArray<BWT, Less, Occ>,
 }
 
 // impl Debug for MGIndex {
@@ -237,6 +237,7 @@ impl MGIndex {
     /// 6. Return the list of matching taxonomic IDs.
 
     pub fn matching_tax_ids(&self,
+                            fmindex: &FMIndex<&BWT, &Less, &Occ>,
                             sequence: &[u8],
                             edit_distance: usize,
                             seed_length: usize,
@@ -259,9 +260,7 @@ impl MGIndex {
             .step(seed_gap)                                 // skip over any in between seed gap
             .map(|i| (i, &sequence[i..i + seed_length]));   // create a reference into the query
 
-        // build fm index
-        let fmindex = FMIndex::new(
-            self.suffix_array.bwt(), self.suffix_array.less(), self.suffix_array.occ());
+
         // find all of the reference regions which we'll align against
         let reference_candidates = {
             let mut bin_locations = Vec::new();

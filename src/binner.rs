@@ -4,7 +4,7 @@
 use bio::alphabets::dna::revcomp;
 use bio::io::fasta;
 use cue::pipeline;
-
+use bio::data_structures::fmindex::{FMIndex};
 
 use error::*;
 use index::{MGIndex, TaxId};
@@ -58,6 +58,10 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
 
     info!("Deserializing candidate filter...");
     let filter = try!(from_file::<MGIndex>(index_path));
+    let fmindex = FMIndex::new(
+        filter.suffix_array.bwt(),
+        filter.suffix_array.less(),
+        filter.suffix_array.occ());
 
     let mut result_writer = BufWriter::new(output_file);
 
@@ -65,7 +69,7 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
 
     let timer = Stopwatch::start_new();
 
-
+    
 
     pipeline("taxonomic binning",
              num_threads,
@@ -99,7 +103,9 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
         
 
 
-        let candidates = filter.matching_tax_ids(&seq_all_caps,
+        let candidates = filter.matching_tax_ids(
+                                                 &fmindex,
+                                                 &seq_all_caps,
                                                  edit_distance as usize,
                                                  seed_size,
                                                  seed_gap,
@@ -109,7 +115,9 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
 
         // get the reverse complement
         let rev_comp_seq = revcomp(&seq_all_caps);
-        let rev_comp_candidates = filter.matching_tax_ids(&rev_comp_seq,
+        let rev_comp_candidates = filter.matching_tax_ids(
+                                                          &fmindex,
+                                                          &rev_comp_seq,
                                                           edit_distance as usize,
                                                           seed_size,
                                                           seed_gap,
