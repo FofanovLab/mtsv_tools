@@ -102,7 +102,6 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
         
         
 
-
         let candidates = filter.matching_tax_ids(
                                                  &fmindex,
                                                  &seq_all_caps,
