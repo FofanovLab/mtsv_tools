@@ -3,7 +3,7 @@
 use align::Aligner;
 use bio::alphabets;
 use bio::data_structures::bwt::{bwt, less, Less, Occ, BWT};
-use bio::data_structures::fmindex::{BackwardSearchResult, FMIndex, FMIndexable};
+use bio::data_structures::fmindex::{BackwardSearchResult, FMIndex, FMIndexable, Interval};
 use bio::data_structures::suffix_array::{suffix_array, SuffixArray, SampledSuffixArray};
 
 use serde::{Serialize, Deserialize};
@@ -45,7 +45,7 @@ struct Bin {
 pub struct MGIndex {
     sequences: Sequence,
     bins: Vec<Bin>,
-    suffix_array: SampledSuffixArray<BWT, Less, Occ>,
+    pub suffix_array: SampledSuffixArray<BWT, Less, Occ>,
 }
 
 // impl Debug for MGIndex {
@@ -237,6 +237,7 @@ impl MGIndex {
     /// 6. Return the list of matching taxonomic IDs.
 
     pub fn matching_tax_ids(&self,
+                            fmindex: &FMIndex<&BWT, &Less, &Occ>,
                             sequence: &[u8],
                             edit_distance: usize,
                             seed_length: usize,
@@ -254,14 +255,14 @@ impl MGIndex {
                 }
             })
             .collect::<Vec<u8>>();
+        // println!("next query");
+
 
         let seeds = (0..(sequence.len() + 1 - seed_length)) // get all seed start indices
             .step(seed_gap)                                 // skip over any in between seed gap
             .map(|i| (i, &sequence[i..i + seed_length]));   // create a reference into the query
 
-        // build fm index
-        let fmindex = FMIndex::new(
-            self.suffix_array.bwt(), self.suffix_array.less(), self.suffix_array.occ());
+
         // find all of the reference regions which we'll align against
         let reference_candidates = {
             let mut bin_locations = Vec::new();
@@ -278,21 +279,32 @@ impl MGIndex {
                     BackwardSearchResult::Complete(sai) => {
                         interval_upper = sai.upper;
                         interval_lower = sai.lower;
-                        sai.occ(&self.suffix_array)
+                        sai
                     }
-                    BackwardSearchResult::Partial(sai, _l) => sai.occ(&self.suffix_array),
-                    BackwardSearchResult::Absent => Vec::<usize>::new()
+                    BackwardSearchResult::Partial(sai, _l) => { 
+                        sai
+                    }
+                    BackwardSearchResult::Absent => {
+                        Interval {
+                            upper: 0,
+                            lower: 0
+                        }
+                    }
                 };
 
-
+                // If no interval is returned no seed hits were found                 
+                if (interval_upper == 0) && (interval_lower == 0) {
+                    continue;
+                }
+         
+                // if too many seed hits were found, skip
                 if (interval_upper - interval_lower) > max_hits {
                     continue;
                 }
 
 
-
                 // track a new SeedHit for each value in ther suffix array interval
-                bin_locations.extend(positions.iter().map(|i| {
+                bin_locations.extend(positions.occ(&self.suffix_array).iter().map(|i| {
                     SeedHit {
                         reference_offset: *i,
                         query_offset: offset,
