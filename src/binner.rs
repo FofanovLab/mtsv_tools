@@ -7,9 +7,9 @@ use cue::pipeline;
 use bio::data_structures::fmindex::{FMIndex};
 
 use error::*;
-use index::{MGIndex, TaxId};
+use index::{MGIndex, TaxId, Hit};
 use io::from_file;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -39,6 +39,7 @@ use stopwatch::Stopwatch;
 pub fn get_and_write_matching_bin_ids(fasta_path: &str,
                                       index_path: &str,
                                       results_path: &str,
+                                      edit_results_path: &str,
                                       num_threads: usize,
                                       edit_distance: u32,
                                       seed_size: usize,
@@ -55,7 +56,7 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
     info!("Test parse of FASTA record successful, reinitializing parser.");
     let reader = try!(fasta::Reader::from_file(Path::new(fasta_path)));
     let output_file = try!(File::create(Path::new(results_path)));
-
+    let edit_output_file = try!(File::create(Path::new(edit_results_path)));
     info!("Deserializing candidate filter...");
     let filter = try!(from_file::<MGIndex>(index_path));
     let fmindex = FMIndex::new(
@@ -64,7 +65,8 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
         filter.suffix_array.occ());
 
     let mut result_writer = BufWriter::new(output_file);
-
+    let mut edit_result_writer = BufWriter::new(edit_output_file);
+    
     info!("Beginning queries.");
 
     let timer = Stopwatch::start_new();
@@ -102,7 +104,7 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
         
         
 
-        let candidates = filter.matching_tax_ids(
+        let (candidates, hits) = filter.matching_tax_ids(
                                                  &fmindex,
                                                  &seq_all_caps,
                                                  edit_distance as usize,
@@ -114,7 +116,7 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
 
         // get the reverse complement
         let rev_comp_seq = revcomp(&seq_all_caps);
-        let rev_comp_candidates = filter.matching_tax_ids(
+        let (rev_comp_candidates, rev_hits) = filter.matching_tax_ids(
                                                           &fmindex,
                                                           &rev_comp_seq,
                                                           edit_distance as usize,
@@ -124,18 +126,25 @@ pub fn get_and_write_matching_bin_ids(fasta_path: &str,
                                                           max_hits);
 
         // unify the result sets
-        let results = candidates.into_iter()
-            .chain(rev_comp_candidates.into_iter())
-            .collect::<BTreeSet<_>>();
 
-        (record.id().to_owned(), results)
+        let results = candidates.into_iter().chain(rev_comp_candidates.into_iter()).collect::<BTreeSet<_>>();
+        let edit_distances: Vec<Hit> = hits.into_iter().chain(rev_hits.into_iter()).collect();
+
+        (record.id().to_owned(), results, edit_distances)
     },
-             |(header, matches)| {
+             |(header, matches, edit_distances)| {
         // again, if we can't write to the results file, just report it and bail
         match write_single_line(&header, &matches, &mut result_writer) {
             Ok(_) => (),
             Err(why) => {
                 error!("Error writing to results file ({})", why);
+                exit(11);
+            },
+        }
+        match write_edit_distances(&header, &edit_distances, &mut edit_result_writer) {
+            Ok(_) => (),
+            Err(why) => {
+                error!("Error writing to edit distance file ({})", why);
                 exit(11);
             },
         }
@@ -175,6 +184,52 @@ pub fn write_single_line<W: Write>(header: &str,
     try!(writer.write(result_line.as_bytes()));
     Ok(())
 }
+
+pub fn write_edit_distances<W: Write>(header: &str,
+            hits: &Vec<Hit>,
+            writer: &mut W)
+            -> MtsvResult<()> {
+    if hits.len() == 0 {
+        return Ok(());
+    }
+
+    let mut hit_map:HashMap<TaxId, u32> = HashMap::new();
+    for hit in hits {
+
+        match hit_map.get(&hit.tax_id) {
+            // if taxid already exists in hashmap, only add if edit distance is smaller
+            Some(edit_distance) => {
+                if edit_distance > &hit.edit {
+                    hit_map.insert(hit.tax_id, hit.edit);
+                }
+            }
+            None => {
+                hit_map.insert(hit.tax_id, hit.edit);
+            }
+        }
+    }
+
+
+    let mut result_line = String::from(header);
+    result_line.push(':');
+    // iterate over hits and add to output string
+
+    let mut hits_peek = hit_map.iter().peekable();
+    for (taxid, edit) in hit_map.iter() {
+        let _ = hits_peek.next();
+
+        result_line.push_str(&taxid.0.to_string());
+        result_line.push('=');
+        result_line.push_str(&edit.to_string());
+        if let Some(_) = hits_peek.peek() {
+            result_line.push(',');
+        }
+    }
+    result_line.push('\n');
+    try!(writer.write(result_line.as_bytes()));
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod test {

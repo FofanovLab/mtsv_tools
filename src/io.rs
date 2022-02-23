@@ -4,8 +4,8 @@ use serde::{Serialize, Deserialize};
 use bincode::{deserialize_from, serialize_into};
 use bio::io::fasta;
 use error::*;
-use index::{Database, TaxId};
-use std::collections::{BTreeMap, BTreeSet};
+use index::{Database, TaxId, Hit};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, BufWriter};
@@ -101,6 +101,66 @@ pub fn parse_findings<'a, R: BufRead + 'a>
         })
     }))
 }
+
+
+pub fn parse_edit_distance_findings<'a, R: BufRead + 'a>
+    (s: R)
+     -> Box<Iterator<Item = MtsvResult<(String, Vec::<Hit>)>> + 'a> {
+    // TODO: replace with -> impl Trait when stabilized
+
+    // the BufRead::lines function handles lazily splitting on lines for us
+    Box::new(s.lines().map(|l| {
+        l.map_err(|e| MtsvError::from(e)).and_then(|l| {
+            let l = l.trim();
+            // split from the right in case someone put colons in the read ID
+            let mut halves = l.rsplitn(2, ':');
+
+    
+            // the first split iteration will always return something, even if it's empty
+            let taxids = halves.next().unwrap().split(',');
+
+            // create vec of hits 
+            let mut hits = Vec::<Hit>::new();
+
+            // parse each taxid (comma separated), returning None if it fails
+            for taxid_raw in taxids {
+                let mut res = taxid_raw.split('=');
+                let tax = match res.next().unwrap().parse::<TaxId>(){
+                        Ok(id) => id,
+                        Err(_) => return Err(MtsvError::InvalidInteger("".to_string())),
+                    };
+
+                let edit = match res.next().unwrap().parse::<u32>(){
+                    Ok(ed) => ed,
+                    Err(_) => return Err(MtsvError::InvalidInteger("".to_string())),
+                    };
+
+
+                // append this hit
+                let hit = Hit {
+                        tax_id: tax,
+                        edit: edit
+                    };
+                hits.push(hit);
+            }
+    
+            // since we're parsing from the right of each line, the read ID is the second token
+            let read_id = match halves.next() {
+                Some(r) => {
+                    if r.len() > 0 {
+                        r.to_string()
+                    } else {
+                        return Err(MtsvError::InvalidHeader(l.to_string()));
+                    }
+                },
+                None => return Err(MtsvError::InvalidHeader(l.to_string())),
+            };
+
+            Ok((read_id, hits))
+        })
+    }))
+}
+
 
 #[cfg(test)]
 mod test {

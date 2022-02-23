@@ -28,6 +28,11 @@ pub struct TaxId(pub u32);
 #[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize, Debug)]
 pub struct Gi(pub u32);
 
+pub struct Hit {
+    pub tax_id: TaxId,
+    pub edit: u32
+}
+
 /// Metadata about a region of the index, corresponding to a single sequence/GI/accession in the
 /// original FASTA database file.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -37,6 +42,7 @@ struct Bin {
     start: usize,
     end: usize,
 }
+
 
 /// Metagenomic index comprised of reference sequences concatenated together, an FM Index over the
 /// concatenated sequences, and the metadata Bins to allow mapping absolute sequence offsets back
@@ -244,7 +250,7 @@ impl MGIndex {
                             seed_gap: usize,
                             min_seeds: usize,
                             max_hits: usize)
-                            -> Vec<TaxId> {
+                            -> (Vec<TaxId>, Vec<Hit>) {
 
         // we need to later compare for edit distance where N's won't match against reference N's
         let seq_no_n = sequence.iter()
@@ -261,7 +267,6 @@ impl MGIndex {
         let seeds = (0..(sequence.len() + 1 - seed_length)) // get all seed start indices
             .step(seed_gap)                                 // skip over any in between seed gap
             .map(|i| (i, &sequence[i..i + seed_length]));   // create a reference into the query
-
 
         // find all of the reference regions which we'll align against
         let reference_candidates = {
@@ -326,11 +331,12 @@ impl MGIndex {
 
 
         let mut matches = Vec::new();
+        let mut hits = Vec::new();
 
         let mut aligner = Aligner::new();
 
         let profile = Profile::new(sequence, &IDENT_W_PENALTY_NO_N_MATCH);
-
+        
         for candidate in reference_candidates {
             // see if we've already found this tax ID
             if let Some(_) = matches.iter().find(|&&t| t == candidate.bin.tax_id) {
@@ -351,13 +357,21 @@ impl MGIndex {
                 // the SW check is faster (w/ SIMD) than the min_edit_distance check, so if we're
                 // within an acceptable tolerance, now do the expensive check
                 let edits = aligner.min_edit_distance(&seq_no_n, cand_seq);
+                
                 if edits as usize <= edit_distance {
-
                     matches.push(candidate.bin.tax_id);
+
+                    let hit = Hit {
+                        tax_id: candidate.bin.tax_id,
+                        edit: edits
+                    };
+                    
+                    hits.push(hit);
                 }
             }
         }
-        matches
+
+        (matches, hits)
     }
 
     // TODO test this function
