@@ -19,23 +19,28 @@ fn main() {
         .arg(Arg::with_name("FASTA")
             .short("f")
             .long("fasta")
-            .help("Absolute path to FASTA query file.")
+            .help("Path to FASTA query file.")
             .takes_value(true)
             .required(true))
         .arg(Arg::with_name("INDEX")
             .short("i")
             .long("index")
-            .help("Absolute path to mtsv index file.")
+            .help("Path to mtsv index file.")
             .takes_value(true)
             .required(true))
         .arg(Arg::with_name("VERBOSE")
             .short("v")
             .help("Include this flag to trigger debug-level logging."))
+        .arg(Arg::with_name("EDIT_DISTANCE_RESULTS_PATH")
+            .short("m")
+            .long("edit-results")
+            .takes_value(true)
+            .help("Path to write edit disance results file."))
         .arg(Arg::with_name("RESULTS_PATH")
             .short("r")
             .long("results")
             .takes_value(true)
-            .help("Path to write results file to."))
+            .help("Path to write results file."))
         .arg(Arg::with_name("NUM_THREADS")
             .short("t")
             .long("threads")
@@ -46,22 +51,22 @@ fn main() {
             .short("e")
             .long("edits")
             .takes_value(true)
-            .help("Edit distance to tolerate in matched reference sites")
-            .default_value("3"))
+            .help("Maximum edit distance cutoff for alignments.")
+            .default_value("20"))
         .arg(Arg::with_name("SEED_SIZE")
             .long("seed-size")
             .takes_value(true)
-            .help("Set to override inital exact match query size.")
-            .default_value("20"))
-        .arg(Arg::with_name("SEED_GAP")
-            .long("seed-gap")
+            .help("Set seed size.")
+            .default_value("16"))
+        .arg(Arg::with_name("SEED_INTERVAL")
+            .long("seed-interval")
             .takes_value(true)
-            .help("Set to override gap between seeds used for initial exact match.")
-            .default_value("3"))
+            .help("Set the interval between seeds used for initial exact match.")
+            .default_value("2"))
         .arg(Arg::with_name("MIN_SEEDS")
             .long("min-seeds")
             .takes_value(true)
-            .help("Set to override minimum number of seeds to perform alignment of a candidate \
+            .help("Set the minimum number of seeds to perform alignment of a candidate \
                    site.")
             .default_value("2"))
         .arg(Arg::with_name("MAX_HITS")
@@ -84,6 +89,7 @@ fn main() {
 
     let exit_code = {
         let results_path = args.value_of("RESULTS_PATH");
+        let edit_results_path = args.value_of("EDIT_DISTANCE_RESULTS_PATH");
 
         let num_threads = match args.value_of("NUM_THREADS") {
             Some(s) => s.parse::<usize>().expect("Invalid number entered for number of threads!"),
@@ -110,19 +116,19 @@ fn main() {
             None => panic!("Missing parameter: seed_size"),
         };
 
-        let seed_gap = match args.value_of("SEED_GAP") {
+        let seed_gap = match args.value_of("SEED_INTERVAL") {
             Some(s) => {
-                let seed_gap = s.parse::<usize>().expect("Invalid seed gap entered!");
-                info!("seed-gap: {}", seed_gap);
+                let seed_gap = s.parse::<usize>().expect("Invalid seed interval entered!");
+                info!("seed-interval: {}", seed_gap);
                 if seed_gap < 3 {
-                    warn!("Seed gap may be small enough that it causes performance issues.");
+                    warn!("Seed interval may be small enough that it causes performance issues.");
                 } else if seed_gap > 10 {
-                    warn!("Seed gap may be large enough that significant results are ignored.");
+                    warn!("Seed inteval may be large enough that significant results are ignored.");
                 }
 
                 seed_gap
             },
-            None => panic!("Missing parameter: seed_gap"),
+            None => panic!("Missing parameter: seed_interval"),
         };
 
         let min_seeds = match args.value_of("MIN_SEEDS") {
@@ -139,7 +145,7 @@ fn main() {
 
                 min_seeds
             },
-            None => panic!("Missing parameter: seed_gap"),
+            None => panic!("Missing parameter: min_seeds"),
         };
 
         let max_hits = match args.value_of("MAX_HITS") {
@@ -157,14 +163,16 @@ fn main() {
             None => panic!("Missing parameter: max_hits"),
         };
 
-        if results_path.is_none() {
+        if results_path.is_none() || edit_results_path.is_none(){
             error!("No results path provided!");
             3
         } else {
             let results_path = results_path.unwrap();
+            let edit_results_path = edit_results_path.unwrap();
             match binner::get_and_write_matching_bin_ids(fasta_path,
                                                          index_path,
                                                          results_path,
+                                                         edit_results_path,
                                                          num_threads,
                                                          edit_tolerance,
                                                          seed_size,
