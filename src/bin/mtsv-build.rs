@@ -42,7 +42,7 @@ fn main() {
             .long("sample-interval")
             .takes_value(true)
             .help("BWT occurance sampling rate. If sample interval is k, every k-th entry will be kept.")
-            .default_value("512"))
+            .default_value("64"))
         .get_matches();
 
 
