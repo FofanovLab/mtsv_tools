@@ -2,7 +2,8 @@
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/mtsv-tools/badges/installer/conda.svg)](https://conda.anaconda.org/bioconda)
 # mtsv-tools
 
-mtsv-tools is a suite of core metagenomic binning and analysis tools. It performs taxonomic classification of metagenomic sequencing reads. It assumes that read fragments in samples will be in a "shotgun" or short read format, typically ~50-200 bases in length.
+MTSv Tools is a suite of core tools for taxonomic classification of metagenomic sequencing reads. MTSv performs a full-alignment using an FM-index assisted q-gram filter followed by SIMD accelerated Smith-Waterman alignment. 
+
 
 ## Installation
 conda install mtsv-tools -c bioconda 
@@ -12,7 +13,7 @@ conda install mtsv-tools -c bioconda
 
 mtsv is built in Rust. You'll need:
 
-* `rustc` and `cargo` >= 1.29.0 < 1.36.0 ([rustup.rs](https://rustup.rs) is the easiest installation method)
+* `rustc` and `cargo` >= 1.29.0 ([rustup.rs](https://rustup.rs) is the easiest installation method)
 * a C compiler (tested with GCC and clang)
 
 ### Tests
@@ -39,7 +40,7 @@ This will place a code coverage report under `target/kcov/index.html`.
 
 ### Building
 
-To build the mtsv binaries:
+To build the MTSv binaries:
 
 ~~~
 $ cargo build --release
@@ -65,9 +66,6 @@ mtsv builds several binaries:
 * `mtsv-binner`
 * `mtsv-build`
 * `mtsv-collapse`
-* `mtsv-signature`
-* `mtsv-readprep`
-* `mtsv-tree-build`
 
 All of these accept the `--help` flag to print a help message on their usage. See below for specific use instructions.
 
@@ -78,90 +76,118 @@ Reference indices must be built prior to performing taxonomic classification.
 
 #### Reference file format & taxdump.tar.gz
 
-To construct the MG-indices, you'll need a multi-FASTA file of all reference sequences, with headers in the format `ACCESSION-TAXONOMICID`. So if a sequence has accession # 12345, and belongs to the NCBI taxonomic ID 987, the header for that sequence should read `12345-987`. The reference sequences can be sourced from any DNA sequence collection (i.e., GenBank, RefSeq, etc.) and customized to fit your project. 
+To construct the MG-indices, you'll need a multi-FASTA file of all reference sequences, with headers in the format `SEQID-TAXID`. So a sequence has a unique integer ID 12345, and belongs to the NCBI taxonomic ID 987, the header for that sequence should read `12345-987`. The reference sequences can be sourced from any DNA sequence collection (i.e., GenBank, RefSeq, etc.) and customized to fit your project. 
 
 
 #### Chunking reference database
 Because MTSv was designed to be highly parallelizable, we recommend building multiple indices from smaller chunks of the reference sequences. This helps reduce the memory requirements and allows for faster processing for both index building and assignment. 
 
-~~~
+```
 $ mtsv-chunk -i PATH_TO_FASTA -o PATH_TO_CHUNK_FOLDER -g NUM_GBS_PER_CHUNK
-~~~
+```
 
-This will write a series of chunk files into the directory specified. See the help message for further information.
+This will break up the reference fasta into a series of smaller files and place them into the directory specified. See the help message for further information.
 
-#### Metagenomic index
-
-Now that you have N chunks of your FASTA database, they need to be processed into indices which MTSv can use for querying. During the index build, the sequences in the chunked FASTA file are concatenated while recoding the location of sequence boundaries and the TaxID associated with each sequence. A suffix array, Burrows-Wheeler Transform, and FM-index are built from the concatenated sequences using the Rust-Bio v0.5.0 package. The FM-index and the associated sequence metadata constitutes the MG-index. One MT-index is created per FASTA file, and new indices can be added as the reference collection grows without needing to rebuild any of the existing indices.
-
-~~~
-$ mtsv-build --fasta /path/to/chunkN.fasta --index /path/to/write/chunkN.index
-~~~
-
-Using default settings, indices will be ~12x the size of the reference file and require about that much RAM to run the binning step. The default sampling interval is 32. This can be overridden by passing `--sample-interval <FM_SAMPLE_INTERVAL>` flag. Lower values will increase the size of the index and can provide a reduction in query time. Increasing the flag will decrease the size of the index up to a point (the size of the suffix array can't be reduced, this setting only changes the FM index size) while accepting a slower query time.
-
-See the help message for other options.
-
-#### Taxonomic tree index
-
-To determine which reads are informative for particular taxonomic IDs, you'll need to construct an index from the NCBI `taxdump.tar.gz` which corresponds to your FASTA database.
-
-~~~
-$ mtsv-tree-build --dump /path/to/taxdump.tar.gz --index /path/to/write/tree.index
-~~~
-
-See the help message for other options.
-
-### Readprep
-
-When classifying metagenomic sequences, MTSv uses the MG-index to narrow down reference sequence locations that are most likely to contain a match. To accomplish this, MTSv uses a q-gram filtering algorithm which requires a reference region to meet a minimum number of exact seed matches before a full alignment is attempted. To ensure that the q-gram filter parameters (and alignment cutoffs) have a consistent meaning, MTSv first requires that all reads have the same length. The `mtsv-readprep` command offers several options for truncating or fragmenting the reads into equal length queries. This command will also deduplicate the queries to make the assignment more efficient and output them as a FASTA file. For the full list of configurations, see the help message:
-
-~~~
-$ mtsv-readprep --help
-Read fragment quality control and homogenization tool (FASTQ -> FASTA).
+```
+mtsv-chunk 2.0.0
+Adam Perry <adam.n.perry@gmail.com>:Tara Furstenau <tara.furstenau@gmail.com>
+Split a FASTA reference database into chunks for index generation.
 
 USAGE:
-    mtsv-readprep [FLAGS] [OPTIONS] <FASTQ>... --out <FASTA> <--lcd|--lcdqual|--segment <SEGMENT>>
+    mtsv-chunk [FLAGS] --input <INPUT> --output <OUTPUT> --gb <SIZE_GB>
 
 FLAGS:
-        --lcd        Enable LCD trim mode (takes first N bases of each read, where N = shortest read length in FASTQ
-                     files).
-        --lcdqual    Enable LCDQ trim mode (takes highest quality N bases of each read, where N = shortest read length
-                     in FASTQ files).
     -v               Include this flag to trigger debug-level logging.
     -h, --help       Prints help information
     -V, --version    Prints version information
 
 OPTIONS:
-        --adapters <ADAPTER_FILE>                  Path to file containing adapters, one per line.
-        --adapter-tolerance <ADAPTER_TOLERANCE>    Number of adapter characters to tolerate at start of reads.
-    -o, --out <FASTA>                              Path to desired output FASTA file.
-    -t, --threads <NUM_THREADS>                    Number of worker threads to spawn. [default: 4]
-        --quality_min <QUALITY_MIN>                Minimum FASTQ quality to tolerate per base.
-        --quality_threshold <QUALITY_THRESHOLD>    Maximum number of bases below minimum quality to tolerate per read.
-        --segment <SEGMENT>
-            Enable SEG trim mode (takes subsequent N length subsequences of each read).
+    -i, --input <INPUT>      Path(s) to vedro results files to collapse
+    -o, --output <OUTPUT>    Folder path to write split outupt files to.
+    -g, --gb <SIZE_GB>       Chunk size (in gigabytes). [default: 1.0]
+```
 
+#### Metagenomic index (MG-index)
 
-ARGS:
-    <FASTQ>...    Path(s) to FASTQ files to QC and collapse.
-~~~
+Now that you have N chunks of your FASTA database, they need to be processed into indices which MTSv can use for querying. During the index build, the sequences in the chunked FASTA file are concatenated while recording the location of sequence boundaries and the TaxID associated with each sequence. A suffix array, Burrows-Wheeler Transform (BWT), and FM-index are built from the concatenated sequences using the Rust-Bio v0.39.1 package. The FM-index and the associated sequence metadata constitutes the MG-index. One MG-index is created per FASTA file, and new indices can be added as the reference collection grows without needing to rebuild any of the existing indices.
 
-Multiple FASTQ files can be passed at once and this command will write FASTA queries with headers in the format `R_COUNT1_COUNT2_COUNT3`, where each count corresponds to the number of times that query was found in each FASTQ file, in the order they were passed as arguments.
+```
+$ mtsv-build --fasta /path/to/chunkN.fasta --index /path/to/write/chunkN.index
+```
 
-### Binning queries
-The `mtsv-binner` assignes the queries to reference sequences in each MG-index. It will begin by extracting overlapping substrings (seeds) of the same size (`--seed-size`) with certain offsets (`--seed-gap`) from each query sequence and its reverse complement. It then uses the MG-index to search for exact, ungapped matches for each seed. The seed matches are sorted by location and grouped into candidate regions using specified windows. The number of hits per candidate is tallied and any candidate that does not meet the minimum number of seed hits (`--min-seeds`) is filtered out. The remaining candidate positions are sorted in descending order by the number of seed hits so that the most promising regions are evaluated first. 
-
-For each candidate region, MTSv extracts the corresponding range from the reference sequence and looks up the TaxID associated with the region in the MG-index. If the current query has already been sucessfully aligned to the TaxID associated with the candidate region, no additional alignment is attempted, and the next candidate region is checked. Otherwise an SIMD-accelerated Smith-Waterman alignment is performed between the extracted reference sequence and the query sequence (using a scoring of 1 for matches and -1 for mismatches, gap opening, and gap extension). If the alignment score is sufficiently high, there is one final check to determine if the edit distance is less than or equal to the user-specified edit distance cutoff (`--edits`). If the alignment is considered successful, then no further alignments are attempted for that query against the same TaxID. Skipping all additional alignments to a TaxID avoids many expensive operations and reduces computation time. 
-
-~~~
-$ mtsv-binner --edits 3 --threads 8 \
-    --index /path/to/chunkN.index \
-    --fasta /path/to/prepared_reads.fasta \
-    --results /path/to/write/chunkN_results.txt
-~~~
+Using default settings, indices will be ~3.6x the size of the reference file and require about that much RAM to run the binning step. The default sampling interval is 64 for the BWT occurance array and 32 for the suffix array. This can be overridden by passing `--sample-interval <FM_SAMPLE_INTERVAL>` for the occurance array or `--sa-sample <SA_SAMPLE_RATE>` for the suffix array. Lower values will increase the size of the index and can provide a reduction in query time. Increasing the flag will decrease the size of the index up to a point while accepting a slower query time.
 
 See the help message for other options.
+```
+$ mtsv-build --help
+mtsv-build 2.0.0
+Adam Perry <adam.n.perry@gmail.com>:Tara Furstenau <tara.furstenau@gmail.com>
+Index construction for mtsv metagenomics binning tool.
+
+USAGE:
+    mtsv-build [FLAGS] [OPTIONS] --fasta <FASTA> --index <INDEX>
+
+FLAGS:
+    -v               Include this flag to trigger debug-level logging.
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+OPTIONS:
+    -f, --fasta <FASTA>                           Path to FASTA database file.
+        --sample-interval <FM_SAMPLE_INTERVAL>
+            BWT occurance sampling rate. If sample interval is k, every k-th entry will be kept. [default: 64]
+
+    -i, --index <INDEX>                           Absolute path to mtsv index file.
+        --sa-sample <SA_SAMPLE_RATE>
+            Suffix array sampling rate. If sampling rate is k, every k-th entry will be kept. [default: 32]
+```
+
+
+
+### Binning Reads
+The `mtsv-binner` command assignes the reads to reference sequences in the provided MG-index (a separate binning command should be run for each of the desired MG-Indices). It will begin by extracting overlapping substrings (seeds) of the same size (`--seed-size`) with certain offsets (`--seed-interval`) from each query sequence and its reverse complement. It then uses the MG-index to search for exact, ungapped matches for each seed. The seed matches are sorted by location and grouped into candidate regions using specified windows. The number of hits per candidate is tallied and any candidate that does not meet the minimum number of seed hits is filtered out. The remaining candidate positions are sorted in descending order by the number of seed hits so that the most promising regions are evaluated first. 
+
+For each candidate region, MTSv extracts the corresponding range from the reference sequence and looks up the TaxID associated with the region in the MG-index. If the current query has already been sucessfully aligned to the TaxID associated with the candidate region, no additional alignment is attempted, and the next candidate region is checked. Otherwise an SIMD-accelerated Smith-Waterman alignment is performed between the extracted reference sequence and the query sequence (using a scoring of 1 for matches and -1 for mismatches, gap opening, and gap extension). If the alignment score is sufficiently high, there is one final check to determine if the edit distance is less than or equal to the user-specified edit distance cutoff (`--edit-rate`). If the alignment is considered successful, then no further alignments are attempted for that query against the same TaxID. Skipping all additional alignments to a TaxID avoids many expensive operations and reduces computation time.
+#### Parameters
+The candidate filtering step is based on a q-gram filtering algorithm which defines the minimum number of exact k-mer matches (from all ***n-k+1*** overlapping ***k***-mers that can be expected between an ***n***-length read and a reference sequence with at most e mismatches. In the worst case where all mismatches are evenly spaced across the alignment, the minimum number of matching ***k***-mers is: ***m = (n+1) - k(e+1)*** and ***m*** is positive when ***n/(e+1) > k***. If only every ***l***th overlapping ***k***-mer is used, the minimum number of matching ***k***-mers is expected to be ***m/l***. Within these parameters, MTSv is highly likely to find all alignments with up to ***e*** mismatches but the likelihood of finding alignments decreases as the number of mismatches exceeds ***e***. MTSv will report any alignment that is within the edit distance tolerance (`--edit-rate`) which may be higher or lower than ***e***.
+
+The edit distance cutoff is calculated as the product of the `--edit-rate` (float between 0 and 1) and the length of the read, *n*. The minimum seed cutoff for a candidate region is then calculated as m = max(1, ((n + 1) - k(ceil(n * e) + 1))
+
+```
+$ mtsv-binner --edit-rate 0.05 --threads 8 \
+    --index /path/to/chunkN.index \
+    --fastq /path/to/reads.fastq \
+    --results /path/to/write/results.txt
+```
+
+See the help message for other options.
+
+```
+mtsv-binner --help
+mtsv 2.0.0
+Adam Perry <adam.n.perry@gmail.com>:Tara Furstenau <tara.furstenau@gmail.com>
+Metagenomics binning tool.
+
+USAGE:
+    mtsv-binner [FLAGS] [OPTIONS] --fasta <FASTA> --fastq <FASTQ> --index <INDEX>
+
+FLAGS:
+    -v               Include this flag to trigger debug-level logging.
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+OPTIONS:
+    -e, --edit-rate <EDIT_TOLERANCE>         The maximum proportion of edits allowed for alignment. [default: 0.1]
+    -f, --fasta <FASTA>                      Path to FASTA reads.
+    -f, --fastq <FASTQ>                      Path to FASTQ reads.
+    -i, --index <INDEX>                      Path to MG-index file.
+        --max-hits <MAX_HITS>                Skip seeds with more than MAX_HITS hits. [default: 20000]
+        --min-seed-scale <MIN_SEED_SCALE>    Scale the minimum seed cutoff calculated for each read. [default: 1]
+    -t, --threads <NUM_THREADS>              Number of worker threads to spawn. [default: 4]
+    -m, --results <RESULTS_PATH>             Path to write results file.
+        --seed-interval <SEED_INTERVAL>      Set the interval between seeds used for initial exact match. [default: 2]
+        --seed-size <SEED_SIZE>              Set seed size. [default: 16]
+```
 
 #### Output
 
