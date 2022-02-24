@@ -1001,12 +1001,11 @@ dependencies = [
 
 [[package]]
 name = "stopwatch"
-version = "0.0.6"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dea8aedf61aa281d90072ff3e9833ea441f653064b625e476fcb1a84a5de277"
+checksum = "3d04b5ebc78da44d3a456319d8bc2783e7d8cc7ccbb5cb4dc3f54afbd93bf728"
 dependencies = [
  "num",
- "time",
 ]
 
 [[package]]
