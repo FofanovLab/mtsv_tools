@@ -149,21 +149,27 @@ The `mtsv-binner` command assignes the reads to reference sequences in the provi
 
 For each candidate region, MTSv extracts the corresponding range from the reference sequence and looks up the TaxID associated with the region in the MG-index. If the current query has already been sucessfully aligned to the TaxID associated with the candidate region, no additional alignment is attempted, and the next candidate region is checked. Otherwise an SIMD-accelerated Smith-Waterman alignment is performed between the extracted reference sequence and the query sequence (using a scoring of 1 for matches and -1 for mismatches, gap opening, and gap extension). If the alignment score is sufficiently high, there is one final check to determine if the edit distance is less than or equal to the user-specified edit distance cutoff (`--edit-rate`). If the alignment is considered successful, then no further alignments are attempted for that query against the same TaxID. Skipping all additional alignments to a TaxID avoids many expensive operations and reduces computation time.
 #### Parameters
-The candidate filtering step is based on a q-gram filtering algorithm which defines the minimum number of exact k-mer matches (from all ***n-k+1*** overlapping ***k***-mers that can be expected between an ***n***-length read and a reference sequence with at most e mismatches. In the worst case where all mismatches are evenly spaced across the alignment, the minimum number of matching ***k***-mers is: ***m = (n+1) - k(e+1)*** and ***m*** is positive when ***n/(e+1) > k***. If only every ***l***th overlapping ***k***-mer is used, the minimum number of matching ***k***-mers is expected to be ***m/l***. Within these parameters, MTSv is highly likely to find all alignments with up to ***e*** mismatches but the likelihood of finding alignments decreases as the number of mismatches exceeds ***e***. MTSv will report any alignment that is within the edit distance tolerance (`--edit-rate`) which may be higher or lower than ***e***.
+The candidate filtering step is based on a q-gram filtering algorithm which defines the minimum number of exact k-mer matches (from all ***n-k+1*** overlapping ***k***-mers that can be expected between an ***n***-length read and a reference sequence with at most e mismatches. In the worst case where all mismatches are evenly spaced across the alignment, the minimum number of matching ***k***-mers is: ***m = (n+1) - k(e+1)*** and ***m*** is positive when ***n/(e+1) > k***. If only every ***l***th overlapping ***k***-mer is used, the minimum number of matching ***k***-mers is expected to be ***m/l***. The edit distance cutoff, ***e***, is calculated as the product of the `--edit-rate` (float between 0 and 1) and the length of the read, *n*. The minimum seed cutoff for a candidate region is then calculated as m = ((n + 1) - k * (ceil(n * e) + 1)) / l where ***k*** is set by `--seed-size` and ***l*** is set by `--seed-interval`. If the parameter settings result in a negative seed cutoff, the value will be set to 1. The seed cutoff can also be scaled up or down using `--min-seed-scale`. The final calculation is min_seeds = max(floor((m) * s), 1), where ***s*** is the scaling factor. 
 
-The edit distance cutoff is calculated as the product of the `--edit-rate` (float between 0 and 1) and the length of the read, *n*. The minimum seed cutoff for a candidate region is then calculated as m = max(1, ((n + 1) - k(ceil(n * e) + 1))
+##### Examples.
+If the read length is 150, the seed size is 16, the seed interval is 1, the edit threshold is 0.05 and the scaling factor is the default of 1, then the minimum seed cutoff will be 7. Because the seed interval covers all overlapping substrings, this guarantees that any candidate region with at least 7 seed hits will be a good alignment with at most 8 mismatches. The threshold can be scaled up or down using `--min-seed-scale` to be more or less stringent without changing the edit distance cutoff. 
+
+max( floor( (((150 + 1) - 16 * (8+1)) / 1) * 1  ), 1) = 7
+
+For higher edit rates, the minimum seed cutoff will typically be the minimum value of 1. For example, if read length is 150, the seed size is 18, the seed interval is 2, the edit threshold is 0.13 the calculated minimum seed cutoff will be negative (-114). In this case the minimum value of 1 will be used. With these settings, we will nearly always find alignments with up to 7 mismatches but as the number of mismatches increases the likelihood decreases. 
 
 ```
-$ mtsv-binner --edit-rate 0.05 --threads 8 \
-    --index /path/to/chunkN.index \
+$ mtsv-binner --edit-rate 0.13 --seed-size 18 \
+    --seed-interval 2 --threads 8 \
+    --index /path/to/chunk1.index \
     --fastq /path/to/reads.fastq \
-    --results /path/to/write/results.txt
+    --results /path/to/write/chunk1_results.txt
 ```
 
 See the help message for other options.
 
 ```
-mtsv-binner --help
+$ mtsv-binner --help
 mtsv 2.0.0
 Adam Perry <adam.n.perry@gmail.com>:Tara Furstenau <tara.furstenau@gmail.com>
 Metagenomics binning tool.
@@ -191,23 +197,44 @@ OPTIONS:
 
 #### Output
 
-`mtsv-binner` writes results for a single read per line. For example, if a read with the header `R1_0_1` maps to taxon IDs `562`, `9062`, and `100`:
+`mtsv-binner` writes results for a single read per line. For example, if a read with the header `R1_123` maps to taxon IDs `562`, `9062`, and `100` with edit distances `5`, `10`, and `11`:
 
-~~~
-R1_0_1:562,9062,100
-~~~
+```
+R1_123:562=5,9062=10,100=11
+```
 
-### Collapsing chunks
+### Collapsing Results
 
 Since each output file from the `mtsv-binner` command will only represent assignments to references within a single MG-index, the results from all MG-indices must be combined into a single results file for further analysis. 
 
-~~~
+```
 $ mtsv-collapse /path/to/chunk1_results.txt /path/to/chunk2_results.txt ... \
     --output /path/to/collapsed_results.txt
-~~~
+```
 
-Make sure to include all of the chunk files. While the collapser could be run in multiple phases, it's generally much faster to do them all at once.
+Make sure to include all of the chunk files. While the collapser could be run in multiple phases, it's generally much faster to do them all at once. If the same TaxID was assigned to the same read in multiple files, the one with the lowest edit distance will be recorded in the final output.
 
 See the help message for other options.
+
+```
+$ mtsv-collapse --help
+mtsv-collapse 2.0.0
+Adam Perry <adam.n.perry@gmail.com>:Tara Furstenau <tara.furstenau@gmail.com>
+Tool for combining the output of multiple separate mtsv runs.
+
+USAGE:
+    mtsv-collapse [FLAGS] <FILES>... --output <OUTPUT>
+
+FLAGS:
+    -v               Include this flag to trigger debug-level logging.
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+OPTIONS:
+    -o, --output <OUTPUT>    Path to write combined outupt file to.
+
+ARGS:
+    <FILES>...    Path(s) to mtsv results files to collapse
+```
 
 
