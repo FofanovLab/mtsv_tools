@@ -9,11 +9,11 @@ use clap::{App, Arg};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 
-use mtsv::collapse::collapse_files;
+use mtsv::collapse::collapse_edit_files;
 use mtsv::util;
 
 fn main() {
-    let args = App::new("mtsv-collapse")
+    let args = App::new("mtsv-edit-collapse")
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about("Tool for combining the output of multiple separate mtsv runs.")
@@ -58,7 +58,7 @@ fn main() {
         infiles.push(rdr);
     }
 
-    match collapse_files(&mut infiles, &mut outfile) {
+    match collapse_edit_files(&mut infiles, &mut outfile) {
         Ok(()) => {
             info!("Successfully collapsed files. Output available in {}",
                   outpath)

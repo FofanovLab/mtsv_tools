@@ -7,15 +7,12 @@ use bio::data_structures::fmindex::{BackwardSearchResult, FMIndex, FMIndexable, 
 use bio::data_structures::suffix_array::{suffix_array, SuffixArray, SampledSuffixArray};
 
 use serde::{Serialize, Deserialize};
-use bincode;
 use itertools::Itertools;
 use ssw::{IDENT_W_PENALTY_NO_N_MATCH, Profile};
 use std::cmp;
 use std::collections::BTreeMap;
-use std::fmt;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug};
 use std::hash::{Hash};
-use std::collections::hash_map::DefaultHasher;
 use std::num::ParseIntError;
 use std::str;
 use std::u32;
@@ -28,8 +25,12 @@ pub struct TaxId(pub u32);
 #[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize, Debug)]
 pub struct Gi(pub u32);
 
+
+/// Records a hit and the edit distance. 
 pub struct Hit {
+    /// The taxid of the hit (TaxId)
     pub tax_id: TaxId,
+    /// Edit distance of the alignment (u32)
     pub edit: u32
 }
 
@@ -37,9 +38,13 @@ pub struct Hit {
 /// original FASTA database file.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
 struct Bin {
+    /// Unique identifier for reference sequence (u32)
     gi: Gi,
+    /// Taxid for reference sequence (TaxId)
     tax_id: TaxId,
+    /// Start position within concatenated reference sequences
     start: usize,
+    /// End position within concatenated reference sequences
     end: usize,
 }
 
@@ -49,8 +54,11 @@ struct Bin {
 /// to GI/accession numbers and taxonomic IDs.
 #[derive(Serialize, Deserialize)]
 pub struct MGIndex {
+    /// Concatenated reference sequences
     sequences: Sequence,
+    /// Meta data for individual reference sequences (Bin)
     bins: Vec<Bin>,
+    /// Sampled suffix array used to build FM-index 
     pub suffix_array: SampledSuffixArray<BWT, Less, Occ>,
 }
 
@@ -86,10 +94,10 @@ impl str::FromStr for Gi {
     }
 }
 
-#[allow(missing_docs)]
+/// Reference sequence
 pub type Sequence = Vec<u8>;
 
-#[allow(missing_docs)]
+/// Sequence Database
 pub type Database = BTreeMap<TaxId, Vec<(Gi, Sequence)>>;
 
 /// The location within the index where a seed exact match was found.
@@ -245,12 +253,12 @@ impl MGIndex {
     pub fn matching_tax_ids(&self,
                             fmindex: &FMIndex<&BWT, &Less, &Occ>,
                             sequence: &[u8],
-                            edit_distance: usize,
+                            edit_freq: f64,
                             seed_length: usize,
                             seed_gap: usize,
-                            min_seeds: usize,
+                            min_seeds_factor: f64,
                             max_hits: usize)
-                            -> (Vec<TaxId>, Vec<Hit>) {
+                            -> Vec<Hit> {
 
         // we need to later compare for edit distance where N's won't match against reference N's
         let seq_no_n = sequence.iter()
@@ -261,8 +269,12 @@ impl MGIndex {
                 }
             })
             .collect::<Vec<u8>>();
-        // println!("next query");
 
+        let seq_len = sequence.len() as f64;
+        let edit_distance = (seq_len * edit_freq).ceil() as usize;
+        let ms = (seq_len + 1.0) - seed_length as f64 * (edit_distance as f64 + 1.0);
+        // calculate min seeds given length of read and other params
+        let min_seeds = (min_seeds_factor * (ms / seed_gap as f64)).floor().max(1.0) as usize;
 
         let seeds = (0..(sequence.len() + 1 - seed_length)) // get all seed start indices
             .step(seed_gap)                                 // skip over any in between seed gap
@@ -371,7 +383,7 @@ impl MGIndex {
             }
         }
 
-        (matches, hits)
+        hits
     }
 
     // TODO test this function

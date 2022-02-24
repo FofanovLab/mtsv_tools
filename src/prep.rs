@@ -15,12 +15,12 @@ use std::process::exit;
 /// Execute QC processes on a given configuration, in parallel as much as possible.
 pub fn run_prep(config: &PrepConfig) -> MtsvResult<()> {
     let mut processed: HashMap<Vec<u8>, Vec<usize>> = HashMap::new();
-    let mut writer = BufWriter::new(try!(File::create(&config.outfile)));
+    let mut writer = BufWriter::new(File::create(&config.outfile)?);
 
     // chain together all of the FASTQ iterators
     let mut readers = Vec::new();
     for (i, &(ref path, _)) in config.infiles.iter().enumerate() {
-        readers.push((i, try!(Reader::from_file(path))));
+        readers.push((i, (Reader::from_file(path))?));
     }
 
     let reads = readers.into_iter()
@@ -64,14 +64,14 @@ pub fn run_prep(config: &PrepConfig) -> MtsvResult<()> {
 
     // all reads should now be in order, so write out their results
     for (num, (mut read, counts)) in processed.into_iter().enumerate() {
-        try!(write!(&mut writer, ">R{}", num + 1));
+        write!(&mut writer, ">R{}", num + 1)?;
         for c in counts {
-            try!(write!(&mut writer, "_{}", c));
+            write!(&mut writer, "_{}", c)?;
         }
-        try!(write!(&mut writer, "\n"));
+        write!(&mut writer, "\n")?;
 
-        try!(writer.write_all(&mut read));
-        try!(write!(&mut writer, "\n"));
+        writer.write_all(&mut read)?;
+        write!(&mut writer, "\n")?;
     }
 
     Ok(())
@@ -324,9 +324,9 @@ mod tests {
         use std::fs::File;
         use std::io::Read;
 
-        let mut f = try!(File::open(p));
+        let mut f = File::open(p)?;
         let mut buf = Vec::new();
-        try!(f.read_to_end(&mut buf));
+        f.read_to_end(&mut buf)?;
 
         Ok(buf)
     }

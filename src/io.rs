@@ -1,11 +1,11 @@
 //! Helper functions for serialization & deserialization.
 
-use serde::{Serialize, Deserialize};
+use serde::{Serialize};
 use bincode::{deserialize_from, serialize_into};
 use bio::io::fasta;
 use error::*;
 use index::{Database, TaxId, Hit};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, BufWriter};
@@ -17,9 +17,9 @@ pub fn from_file<T>(p: &str) -> MtsvResult<T>
     where T: serde::de::DeserializeOwned
 {
 
-    let f = try!(File::open(Path::new(p)));
+    let f = File::open(Path::new(p))?;
     let mut reader = BufReader::new(f);
-    Ok(try!(deserialize_from(&mut reader)))
+    Ok(deserialize_from(&mut reader)?)
 }
 
 /// Write an arbitrary `Encodable` type to a file path.
@@ -27,9 +27,9 @@ pub fn write_to_file<T>(t: &T, p: &str) -> MtsvResult<()>
     where T: Serialize
 {
 
-    let f = try!(File::create(Path::new(p)));
+    let f = File::create(Path::new(p))?;
     let mut writer = BufWriter::new(f);
-    Ok(try!(serialize_into(&mut writer, t)))
+    Ok(serialize_into(&mut writer, t)?)
 }
 
 /// Parse a FASTA database into a single map of all taxonomy IDs.
@@ -40,9 +40,9 @@ pub fn parse_fasta_db<R>(records: R) -> MtsvResult<Database>
 
     debug!("Parsing FASTA database file...");
     for record in records {
-        let record = try!(record);
+        let record = (record)?;
 
-        let (gi, tax_id) = try!(parse_read_header(record.id()));
+        let (gi, tax_id) = parse_read_header(record.id())?;
 
         let sequences = taxon_map.entry(tax_id).or_insert_with(|| vec![]);
         sequences.push((gi, record.seq().to_vec()));
@@ -60,7 +60,7 @@ pub fn parse_fasta_db<R>(records: R) -> MtsvResult<Database>
 ///
 pub fn parse_findings<'a, R: BufRead + 'a>
     (s: R)
-     -> Box<Iterator<Item = MtsvResult<(String, BTreeSet<TaxId>)>> + 'a> {
+     -> Box<dyn Iterator<Item = MtsvResult<(String, BTreeSet<TaxId>)>> + 'a> {
     // TODO: replace with -> impl Trait when stabilized
 
     // the BufRead::lines function handles lazily splitting on lines for us
@@ -102,10 +102,16 @@ pub fn parse_findings<'a, R: BufRead + 'a>
     }))
 }
 
-
+/// Return a lazy iterator which parses the findings of a mtsv-binner run.
+///
+/// The Option return type could indicate a few problems:
+///
+/// * There are an incorrect number of tokens after splitting on the colon separator
+/// * One of the tax IDs isn't a valid unsigned integer
+///
 pub fn parse_edit_distance_findings<'a, R: BufRead + 'a>
     (s: R)
-     -> Box<Iterator<Item = MtsvResult<(String, Vec::<Hit>)>> + 'a> {
+     -> Box<dyn Iterator<Item = MtsvResult<(String, Vec::<Hit>)>> + 'a> {
     // TODO: replace with -> impl Trait when stabilized
 
     // the BufRead::lines function handles lazily splitting on lines for us

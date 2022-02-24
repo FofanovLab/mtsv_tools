@@ -29,7 +29,7 @@ pub fn write_db_chunks(records: &Database,
     chunk_path.push(&format!("{}_{}.fasta", base_filename, chunk_num));
     written_paths.push(chunk_path.clone());
 
-    let mut writer = BufWriter::new(try!(File::create(&chunk_path)));
+    let mut writer = BufWriter::new(File::create(&chunk_path)?);
 
     info!("Writing to {:?}...", &chunk_path);
 
@@ -39,13 +39,13 @@ pub fn write_db_chunks(records: &Database,
         for &(gi, ref sequence) in seqs {
             let gi_str = gi.0.to_string();
 
-            bytes_written += try!(writer.write(b">"));
-            bytes_written += try!(writer.write(gi_str.as_bytes()));
-            bytes_written += try!(writer.write(b"-"));
-            bytes_written += try!(writer.write(tid_str.as_bytes()));
-            bytes_written += try!(writer.write(b"\n"));
-            bytes_written += try!(writer.write(&sequence));
-            bytes_written += try!(writer.write(b"\n"));
+            bytes_written += writer.write(b">")?;
+            bytes_written += writer.write(gi_str.as_bytes())?;
+            bytes_written += writer.write(b"-")?;
+            bytes_written += writer.write(tid_str.as_bytes())?;
+            bytes_written += writer.write(b"\n")?;
+            bytes_written += writer.write(&sequence)?;
+            bytes_written += writer.write(b"\n")?;
 
             if bytes_written >= target_size {
                 // we need to set up a new writer before we write things
@@ -54,7 +54,7 @@ pub fn write_db_chunks(records: &Database,
                 chunk_path.pop();
                 chunk_path.push(&format!("{}_{}.fasta", base_filename, chunk_num));
                 written_paths.push(chunk_path.clone());
-                writer = BufWriter::new(try!(File::create(&chunk_path)));
+                writer = BufWriter::new(File::create(&chunk_path)?);
 
                 info!("Writing to {:?}...", &chunk_path);
             }

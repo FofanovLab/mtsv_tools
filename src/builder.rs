@@ -18,13 +18,13 @@ pub fn build_and_write_index<R>(records: R,
                                 -> MtsvResult<()>
     where R: Iterator<Item = io::Result<fasta::Record>>
 {
-    let taxon_map = try!(parse_fasta_db(records));
+    let taxon_map = parse_fasta_db(records)?;
 
     info!("File parsed, building index...");
     let index = MGIndex::new(taxon_map, sample_interval, suffix_sample);
 
     info!("Writing index to file...");
-    try!(write_to_file(&index, index_path));
+    write_to_file(&index, index_path)?;
 
     Ok(())
 }
