@@ -17,25 +17,33 @@ fn main() {
         .author(env!("CARGO_PKG_AUTHORS"))
         .about("Metagenomics binning tool.")
         .arg(Arg::with_name("FASTA")
-            .short("f")
+            .short("fa")
             .long("fasta")
-            .help("Absolute path to FASTA query file.")
+            .help("Path to FASTA reads.")
             .takes_value(true)
-            .required(true))
+            .required_unless("FASTQ")
+            .conflicts_with("FASTQ"))
+        .arg(Arg::with_name("FASTQ")
+            .short("fq")
+            .long("fastq")
+            .help("Path to FASTQ reads.")
+            .takes_value(true)
+            .required_unless("FASTA")
+            .conflicts_with("FASTA"))
         .arg(Arg::with_name("INDEX")
             .short("i")
             .long("index")
-            .help("Absolute path to mtsv index file.")
+            .help("Path to MG-index file.")
             .takes_value(true)
             .required(true))
         .arg(Arg::with_name("VERBOSE")
             .short("v")
             .help("Include this flag to trigger debug-level logging."))
         .arg(Arg::with_name("RESULTS_PATH")
-            .short("r")
+            .short("m")
             .long("results")
             .takes_value(true)
-            .help("Path to write results file to."))
+            .help("Path to write results file."))
         .arg(Arg::with_name("NUM_THREADS")
             .short("t")
             .long("threads")
@@ -44,26 +52,25 @@ fn main() {
             .default_value("4"))
         .arg(Arg::with_name("EDIT_TOLERANCE")
             .short("e")
-            .long("edits")
+            .long("edit-rate")
             .takes_value(true)
-            .help("Edit distance to tolerate in matched reference sites")
-            .default_value("3"))
+            .help("The maximum proportion of edits allowed for alignment.")
+            .default_value("0.1"))
         .arg(Arg::with_name("SEED_SIZE")
             .long("seed-size")
             .takes_value(true)
-            .help("Set to override inital exact match query size.")
-            .default_value("20"))
-        .arg(Arg::with_name("SEED_GAP")
-            .long("seed-gap")
+            .help("Set seed size.")
+            .default_value("16"))
+        .arg(Arg::with_name("SEED_INTERVAL")
+            .long("seed-interval")
             .takes_value(true)
-            .help("Set to override gap between seeds used for initial exact match.")
-            .default_value("3"))
-        .arg(Arg::with_name("MIN_SEEDS")
-            .long("min-seeds")
-            .takes_value(true)
-            .help("Set to override minimum number of seeds to perform alignment of a candidate \
-                   site.")
+            .help("Set the interval between seeds used for initial exact match.")
             .default_value("2"))
+        .arg(Arg::with_name("MIN_SEED_SCALE")
+            .long("min-seed-scale")
+            .takes_value(true)
+            .help("Scale the minimum seed cutoff calculated for each read.")
+            .default_value("1"))
         .arg(Arg::with_name("MAX_HITS")
             .long("max-hits")
             .takes_value(true)
@@ -79,11 +86,27 @@ fn main() {
         log::LogLevelFilter::Info
     });
 
-    let fasta_path = args.value_of("FASTA").unwrap();
-    let index_path = args.value_of("INDEX").unwrap();
+    
+ 
+    
+    
 
     let exit_code = {
         let results_path = args.value_of("RESULTS_PATH");
+        let fastq_path = args.value_of("FASTQ");
+        let fasta_path = args.value_of("FASTA");
+        let index_path = args.value_of("INDEX").unwrap();
+
+        let input_path;
+        let input_type;
+
+        if !fasta_path.is_none() {
+            input_path = fasta_path.unwrap();
+            input_type = "FASTA";
+        } else {
+            input_path = fastq_path.unwrap();
+            input_type = "FASTQ";
+        }
 
         let num_threads = match args.value_of("NUM_THREADS") {
             Some(s) => s.parse::<usize>().expect("Invalid number entered for number of threads!"),
@@ -91,7 +114,14 @@ fn main() {
         };
 
         let edit_tolerance = match args.value_of("EDIT_TOLERANCE") {
-            Some(s) => s.parse::<u32>().expect("Invalid edit distance entered!"),
+            Some(s) => {
+                let edit = s.parse::<f64>().expect("Invalid edit proportion entered!");
+                info!("Max Edit Tolerance Proportion: {}", edit);
+                if edit < 0.0 || edit > 1.0 {
+                    panic!("Edit tolerance proportion must be between 0 and 1, inclusive");
+                }
+                edit
+            }
             None => unreachable!(),
         };
 
@@ -107,39 +137,31 @@ fn main() {
 
                 seed_size
             },
-            None => panic!("Missing parameter: seed_size"),
+            None => panic!("Missing parameter: seed-size"),
         };
 
-        let seed_gap = match args.value_of("SEED_GAP") {
+        let seed_gap = match args.value_of("SEED_INTERVAL") {
             Some(s) => {
-                let seed_gap = s.parse::<usize>().expect("Invalid seed gap entered!");
-                info!("seed-gap: {}", seed_gap);
-                if seed_gap < 3 {
-                    warn!("Seed gap may be small enough that it causes performance issues.");
+                let seed_gap = s.parse::<usize>().expect("Invalid seed interval entered!");
+                info!("Seed Interval: {}", seed_gap);
+                if seed_gap < 2 {
+                    warn!("Seed interval may be small enough that it causes performance issues.");
                 } else if seed_gap > 10 {
-                    warn!("Seed gap may be large enough that significant results are ignored.");
+                    warn!("Seed interval may be large enough that significant results are ignored.");
                 }
 
                 seed_gap
             },
-            None => panic!("Missing parameter: seed_gap"),
+            None => panic!("Missing parameter: seed-interval"),
         };
 
-        let min_seeds = match args.value_of("MIN_SEEDS") {
+        let min_seeds = match args.value_of("MIN_SEED_SCALE") {
             Some(s) => {
-                let min_seeds = s.parse::<usize>().expect("Invalid min. # of seeds entered!");
-                info!("Min Seeds: {}", min_seeds);
-                if min_seeds < 2 {
-                    warn!("Performance may be significantly slowed by aligning candidate sites \
-                           with that few seeds found.");
-                } else if min_seeds > 4 {
-                    warn!("Min. # of seeds may be high enough that significant results are \
-                           ignored.");
-                }
-
+                let min_seeds = s.parse::<f64>().expect("Invalid min seed scaling factor entered!");
+                info!("Min Seed Scale: {}", min_seeds);
                 min_seeds
             },
-            None => panic!("Missing parameter: seed_gap"),
+            None => panic!("Missing parameter: min-seed-scale"),
         };
 
         let max_hits = match args.value_of("MAX_HITS") {
@@ -149,12 +171,12 @@ fn main() {
                 if max_hits > 100000 {
                     warn!("Max hits may be large enough to cause performance issues.");
                 } else if max_hits < 10000 {
-                    warn!("Max hits may be too small which can cause some alignments to be missed.");
+                    warn!("Max hits may be too small which may cause some alignments to be missed.");
                 } 
                 
                 max_hits
             },
-            None => panic!("Missing parameter: max_hits"),
+            None => panic!("Missing parameter: max-hits"),
         };
 
         if results_path.is_none() {
@@ -162,7 +184,9 @@ fn main() {
             3
         } else {
             let results_path = results_path.unwrap();
-            match binner::get_and_write_matching_bin_ids(fasta_path,
+            if input_type == "FASTA" {
+                match binner::get_fasta_and_write_matching_bin_ids(
+                                                         input_path,
                                                          index_path,
                                                          results_path,
                                                          num_threads,
@@ -171,14 +195,37 @@ fn main() {
                                                          seed_gap,
                                                          min_seeds,
                                                          max_hits) {
-                Ok(_) => 0,
-                Err(why) => {
+                    Ok(_) => 0,
+                    Err(why) => {
+                        error!("Error running query: {}", why);
+                        2
+                        
+                    },
+                }
+            } else {
+
+                match binner::get_fastq_and_write_matching_bin_ids(
+                                                        input_path,
+                                                        index_path,
+                                                        results_path,
+                                                        num_threads,
+                                                        edit_tolerance,
+                                                        seed_size,
+                                                        seed_gap,
+                                                        min_seeds,
+                                                        max_hits) {
+                    Ok(_) => 0,
+                    Err(why) => {
                     error!("Error running query: {}", why);
                     2
-                },
+
+                    },
+                }
             }
         }
+
     };
 
     std::process::exit(exit_code);
 }
+

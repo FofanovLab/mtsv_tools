@@ -14,10 +14,9 @@ description = "Metagenomic binning and analysis"
 [dependencies]
 anyhow = "1.0"
 bincode = "1.3.3"
-bio = "*"
+bio = "0.39.1"
 chrono = "0.2"
 cue = {path="vendor/cue", version = "0.1"}
-daggy = { version = "0.4", path = "vendor/daggy" }
 env_logger = "0.3"
 flate2 = "0.2"
 itertools = "0.4"

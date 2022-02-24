@@ -27,7 +27,6 @@ extern crate bio;
 extern crate chrono;
 extern crate clap;
 extern crate cue;
-extern crate daggy;
 extern crate env_logger;
 extern crate itertools;
 extern crate rustc_serialize;

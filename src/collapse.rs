@@ -1,10 +1,11 @@
 //! Collapse multiple mtsv results/findings files into a single one.
 
-use binner::write_single_line;
+use binner::{write_single_line, write_edit_distances};
 use error::*;
-use io::parse_findings;
-use std::collections::{BTreeMap, BTreeSet};
+use io::{parse_findings, parse_edit_distance_findings};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{BufRead, Write};
+use index::{TaxId, Hit};
 
 /// Given a list of mtsv results file paths, collapse into a single one.
 pub fn collapse_files<R, W>(files: &mut [R], write_to: &mut W) -> MtsvResult<()>
@@ -16,7 +17,7 @@ pub fn collapse_files<R, W>(files: &mut [R], write_to: &mut W) -> MtsvResult<()>
     for ref mut r in files {
 
         for res in parse_findings(r) {
-            let (readid, hits) = try!(res);
+            let (readid, hits) = (res)?;
 
             results.entry(readid).or_insert(BTreeSet::new()).extend(hits.into_iter());
         }
@@ -24,11 +25,68 @@ pub fn collapse_files<R, W>(files: &mut [R], write_to: &mut W) -> MtsvResult<()>
 
     info!("All input files parsed and collapsed, writing to disk...");
     for (header, hits) in results.iter() {
-        try!(write_single_line(header, hits, write_to));
+        write_single_line(header, hits, write_to)?;
     }
 
     Ok(())
 }
+
+/// Given a list of mtsv edit distance result file paths, collapse into a single one.
+pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W) -> MtsvResult<()>
+    where R: BufRead,
+          W: Write
+{
+    let mut results = BTreeMap::new();
+
+    for ref mut r in files {
+
+        for res in parse_edit_distance_findings(r) {
+            let (readid, hits) = (res)?;
+                results.entry(readid).or_insert(Vec::<Hit>::new()).extend(hits);
+        }
+    }
+    info!("All input files parsed and collapsed, writing to disk...");
+    for (header, hits) in results.iter() {
+        let mut hit_map:HashMap<TaxId, u32> = HashMap::new();
+        for hit in hits {
+            
+            match hit_map.get(&hit.tax_id) {
+                    // if taxid already exists in hashmap, only add if edit distance is smaller
+                    Some(edit_exists) => {
+                        if edit_exists > &hit.edit {
+                            hit_map.insert(hit.tax_id, hit.edit);
+                        }
+                    }
+                    None => {
+                        hit_map.insert(hit.tax_id, hit.edit);
+                    }
+            }
+                
+        }
+    
+
+        let mut combined_hits = Vec::<Hit>::new();
+        for (key, value) in hit_map.into_iter() {
+            let hit = Hit {
+                tax_id: key,
+                edit: value
+            };
+            combined_hits.push(hit);
+        }
+        write_edit_distances(header, &combined_hits, write_to)?;
+
+    }
+    Ok(()) 
+}
+
+
+
+
+        
+    
+
+
+
 
 #[cfg(test)]
 mod test {

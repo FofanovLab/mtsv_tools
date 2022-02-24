@@ -17,7 +17,7 @@ pub enum MtsvError {
     MissingHeader,
     Serialize(bincode::Error),
     Utf8(str::Utf8Error),
-    FastqReadError,
+    FastqReadError(String),
     AnyhowError(String),
 }
 
@@ -34,7 +34,7 @@ impl fmt::Display for MtsvError {
             &MtsvError::MissingHeader => write!(f, "Empty header found in FASTA file"),
             &MtsvError::Serialize(ref e) => write!(f, "Unable to serialize/deserialize item: {}", e),
             &MtsvError::Utf8(ref e) => write!(f, "Found invalid UTF8 input ({})", e),
-            &MtsvError::FastqReadError => write!(f, "Error reading FASTQ file"),
+            &MtsvError::FastqReadError(ref e) => write!(f, "Error reading FASTQ file: ({})", e),
             &MtsvError::AnyhowError(ref s) => write!(f, "Error: {}", s),
         }
     }
@@ -69,6 +69,6 @@ impl From<anyhow::Error> for MtsvError {
 
 impl From<bio::io::fastq::Error> for MtsvError {
     fn from(e: bio::io::fastq::Error) -> Self {
-        MtsvError::FastqReadError
+        MtsvError::FastqReadError(e.to_string())
     }
 }

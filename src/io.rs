@@ -1,10 +1,10 @@
 //! Helper functions for serialization & deserialization.
 
-use serde::{Serialize, Deserialize};
+use serde::{Serialize};
 use bincode::{deserialize_from, serialize_into};
 use bio::io::fasta;
 use error::*;
-use index::{Database, TaxId};
+use index::{Database, TaxId, Hit};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io;
@@ -17,9 +17,9 @@ pub fn from_file<T>(p: &str) -> MtsvResult<T>
     where T: serde::de::DeserializeOwned
 {
 
-    let f = try!(File::open(Path::new(p)));
+    let f = File::open(Path::new(p))?;
     let mut reader = BufReader::new(f);
-    Ok(try!(deserialize_from(&mut reader)))
+    Ok(deserialize_from(&mut reader)?)
 }
 
 /// Write an arbitrary `Encodable` type to a file path.
@@ -27,9 +27,9 @@ pub fn write_to_file<T>(t: &T, p: &str) -> MtsvResult<()>
     where T: Serialize
 {
 
-    let f = try!(File::create(Path::new(p)));
+    let f = File::create(Path::new(p))?;
     let mut writer = BufWriter::new(f);
-    Ok(try!(serialize_into(&mut writer, t)))
+    Ok(serialize_into(&mut writer, t)?)
 }
 
 /// Parse a FASTA database into a single map of all taxonomy IDs.
@@ -40,9 +40,9 @@ pub fn parse_fasta_db<R>(records: R) -> MtsvResult<Database>
 
     debug!("Parsing FASTA database file...");
     for record in records {
-        let record = try!(record);
+        let record = (record)?;
 
-        let (gi, tax_id) = try!(parse_read_header(record.id()));
+        let (gi, tax_id) = parse_read_header(record.id())?;
 
         let sequences = taxon_map.entry(tax_id).or_insert_with(|| vec![]);
         sequences.push((gi, record.seq().to_vec()));
@@ -60,7 +60,7 @@ pub fn parse_fasta_db<R>(records: R) -> MtsvResult<Database>
 ///
 pub fn parse_findings<'a, R: BufRead + 'a>
     (s: R)
-     -> Box<Iterator<Item = MtsvResult<(String, BTreeSet<TaxId>)>> + 'a> {
+     -> Box<dyn Iterator<Item = MtsvResult<(String, BTreeSet<TaxId>)>> + 'a> {
     // TODO: replace with -> impl Trait when stabilized
 
     // the BufRead::lines function handles lazily splitting on lines for us
@@ -101,6 +101,72 @@ pub fn parse_findings<'a, R: BufRead + 'a>
         })
     }))
 }
+
+/// Return a lazy iterator which parses the findings of a mtsv-binner run.
+///
+/// The Option return type could indicate a few problems:
+///
+/// * There are an incorrect number of tokens after splitting on the colon separator
+/// * One of the tax IDs isn't a valid unsigned integer
+///
+pub fn parse_edit_distance_findings<'a, R: BufRead + 'a>
+    (s: R)
+     -> Box<dyn Iterator<Item = MtsvResult<(String, Vec::<Hit>)>> + 'a> {
+    // TODO: replace with -> impl Trait when stabilized
+
+    // the BufRead::lines function handles lazily splitting on lines for us
+    Box::new(s.lines().map(|l| {
+        l.map_err(|e| MtsvError::from(e)).and_then(|l| {
+            let l = l.trim();
+            // split from the right in case someone put colons in the read ID
+            let mut halves = l.rsplitn(2, ':');
+
+    
+            // the first split iteration will always return something, even if it's empty
+            let taxids = halves.next().unwrap().split(',');
+
+            // create vec of hits 
+            let mut hits = Vec::<Hit>::new();
+
+            // parse each taxid (comma separated), returning None if it fails
+            for taxid_raw in taxids {
+                let mut res = taxid_raw.split('=');
+                let tax = match res.next().unwrap().parse::<TaxId>(){
+                        Ok(id) => id,
+                        Err(_) => return Err(MtsvError::InvalidInteger("".to_string())),
+                    };
+
+                let edit = match res.next().unwrap().parse::<u32>(){
+                    Ok(ed) => ed,
+                    Err(_) => return Err(MtsvError::InvalidInteger("".to_string())),
+                    };
+
+
+                // append this hit
+                let hit = Hit {
+                        tax_id: tax,
+                        edit: edit
+                    };
+                hits.push(hit);
+            }
+    
+            // since we're parsing from the right of each line, the read ID is the second token
+            let read_id = match halves.next() {
+                Some(r) => {
+                    if r.len() > 0 {
+                        r.to_string()
+                    } else {
+                        return Err(MtsvError::InvalidHeader(l.to_string()));
+                    }
+                },
+                None => return Err(MtsvError::InvalidHeader(l.to_string())),
+            };
+
+            Ok((read_id, hits))
+        })
+    }))
+}
+
 
 #[cfg(test)]
 mod test {

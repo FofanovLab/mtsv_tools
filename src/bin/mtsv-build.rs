@@ -37,12 +37,12 @@ fn main() {
             .long("sa-sample")
             .takes_value(true)
             .help("Suffix array sampling rate. If sampling rate is k, every k-th entry will be kept.")
-            .default_value("1024"))
+            .default_value("32"))
         .arg(Arg::with_name("FM_SAMPLE_INTERVAL")
             .long("sample-interval")
             .takes_value(true)
             .help("BWT occurance sampling rate. If sample interval is k, every k-th entry will be kept.")
-            .default_value("32"))
+            .default_value("64"))
         .get_matches();
 
 

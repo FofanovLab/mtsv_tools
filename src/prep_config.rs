@@ -1,20 +1,15 @@
 //! Configuration for readprep.
-
-use bio::alphabets::dna::revcomp;
 use bio::io::fastq;
 use bio::io::fastq::Reader;
 use clap::{App, Arg, ArgGroup, ArgMatches};
 
 use error::MtsvResult;
 use std::cmp::min;
-use std::collections::HashSet;
-use std::fs::File;
-use std::io::{BufReader};
 use std::path::{Path, PathBuf};
 use bio::io::fastq::FastqRead;
 
 /// The configuration for a particular readprep run.
-#[derive(Debug, Eq, PartialEq, RustcEncodable)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct PrepConfig {
     /// How to trim sequences.
     pub trim: TrimType,
@@ -36,7 +31,7 @@ pub struct PrepConfig {
 }
 
 /// Which type of length-homogenization (trimming) to use on the reads in a particular file.
-#[derive(Debug, Eq, PartialEq, RustcEncodable)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum TrimType {
     /// Just take the first N bases of the read sequence.
     LcdFirstN(usize),
@@ -47,7 +42,7 @@ pub enum TrimType {
 }
 
 /// The inferred quality encoding used by a particular file.
-#[derive(Debug, Eq, PartialEq, RustcEncodable)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum QualityEncoding {
     /// Illumina 1.5 (offset = 64)
     Illumina15,
@@ -72,7 +67,7 @@ impl QualityEncoding {
 }
 
 /// The metadata obtained about a particular FASTQ input file.
-#[derive(Debug, Eq, PartialEq, RustcEncodable)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct FastqMetadata {
     /// The read length of all reads in the file. Assumes files have uniform read length.
     pub read_len: usize,
@@ -85,14 +80,14 @@ pub struct FastqMetadata {
 /// Run an initial parse of a file, determining it's read length, the number of reads contained,
 /// and a best guess at what quality score encoding is used.
 pub fn read_fastq_metadata(p: &Path) -> MtsvResult<FastqMetadata> {
-    let rdr = try!(Reader::from_file(p));
+    let rdr = Reader::from_file(p)?;
 
     let mut count = 0;
     let mut read_len = 10_000_000;
     let mut min_quality = 255u8;
 
     for record in rdr.records() {
-        let record = try!(record);
+        let record = (record)?;
 
         count += 1;
         read_len = min(read_len, record.seq().len());
@@ -102,9 +97,9 @@ pub fn read_fastq_metadata(p: &Path) -> MtsvResult<FastqMetadata> {
     }
 
     let encoding = match min_quality {
-        67...255 => QualityEncoding::Illumina15,
-        64...66 => QualityEncoding::Illumina13,
-        59...63 => QualityEncoding::Solexa,
+        67..=255 => QualityEncoding::Illumina15,
+        64..=66 => QualityEncoding::Illumina13,
+        59..=63 => QualityEncoding::Solexa,
         _ => QualityEncoding::Sanger,
     };
 
@@ -210,7 +205,7 @@ pub fn parse_config(args: &ArgMatches) -> MtsvResult<PrepConfig> {
     for p in args.values_of("FASTQ").unwrap() {
         info!("Parsing {}...", p);
         let p = PathBuf::from(p);
-        let md = try!(read_fastq_metadata(&p));
+        let md = read_fastq_metadata(&p)?;
 
         infiles.push((p, md));
     }
@@ -312,8 +307,8 @@ pub fn prep_cli_app() -> App<'static, 'static> {
 
 /// Check to make sure we can parse a FASTQ record out of a given path.
 fn validate_fastq_file(s: String) -> Result<(), String> {
-    let mut rdr = try!(fastq::Reader::from_file(Path::new(&s))
-        .map_err(|e| format!("Unable to open {} for parsing: {:?}", &s, e)));
+    let mut rdr = (fastq::Reader::from_file(Path::new(&s))
+        .map_err(|e| format!("Unable to open {} for parsing: {:?}", &s, e)))?;
     let mut rec = fastq::Record::new();
 
     rdr.read(&mut rec).map_err(|e| format!("Unable to parse {} as a FASTQ file: {:?}", &s, e))
