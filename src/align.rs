@@ -18,7 +18,7 @@ impl Aligner {
     /// of haystack.
     ///
     /// Based on
-    /// https://www.cs.jhu.edu/~langmea/resources/lecture_notes/variations_on_edit_dist.pdf.
+    /// <https://www.cs.jhu.edu/~langmea/resources/lecture_notes/variations_on_edit_dist.pdf.>
     ///
     /// # Safety
     ///

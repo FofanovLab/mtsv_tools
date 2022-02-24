@@ -317,8 +317,7 @@ fn validate_fastq_file(s: String) -> Result<(), String> {
 #[cfg(test)]
 mod test {
 
-    use std::collections::HashSet;
-    use std::path::{Path, PathBuf};
+    use std::path::{PathBuf};
     use super::*;
 
     #[test]
@@ -370,8 +369,6 @@ mod test {
             num_threads: 4,
             min_quality: None,
             quality_threshold: None,
-            adapter_tolerance: None,
-            adapters: None,
             outfile: PathBuf::from("/dev/null"),
             infiles: vec![
                 (PathBuf::from("tests/prep/sample1.fastq"),

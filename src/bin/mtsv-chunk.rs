@@ -15,7 +15,7 @@ use mtsv::io::parse_fasta_db;
 use mtsv::util;
 
 fn main() {
-    let args = App::new("vedro-chunk")
+    let args = App::new("mtsv-chunk")
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about("Split a FASTA reference database into chunks for index generation.")
