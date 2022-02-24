@@ -9,42 +9,42 @@ MTSv Tools is a suite of core tools for taxonomic classification of metagenomic 
 conda install mtsv-tools -c bioconda 
 
 
-## Building
+## Requirements
 
 mtsv is built in Rust. You'll need:
 
 * `rustc` and `cargo` >= 1.29.0 ([rustup.rs](https://rustup.rs) is the easiest installation method)
 * a C compiler (tested with GCC and clang)
 
-### Tests
+## Tests
 
 To run tests:
 
-~~~
+```
 $ cargo test
-~~~
+```
 
 To generate a code coverage report, make sure [kcov >= 26](https://simonkagstrom.github.io/kcov/) is installed on your `PATH`, then install `cargo-kcov`:
 
-~~~
+```
 $ cargo install cargo-kcov
-~~~
+```
 
 To run coverage:
 
-~~~
+```
 $ cargo kcov -- --exclude-pattern="/.cargo,vendor/,tests/,bench/,include/,bin/,ssw/"
-~~~
+```
 
 This will place a code coverage report under `target/kcov/index.html`.
 
-### Building
+## Building Package
 
 To build the MTSv binaries:
 
-~~~
+```
 $ cargo build --release
-~~~
+```
 
 They'll be available under `target/release/mtsv-*`.
 
@@ -52,9 +52,9 @@ They'll be available under `target/release/mtsv-*`.
 
 To generate the internal documentation:
 
-~~~
+```
 $ cargo doc [--open]
-~~~
+```
 
 (pass the `--open` flag if you want to immediately open the docs in your browser)
 
@@ -70,16 +70,16 @@ mtsv builds several binaries:
 All of these accept the `--help` flag to print a help message on their usage. See below for specific use instructions.
 
 
-### MG-Index construction
+## Reference Sequence Data
 MTSv implements a custom metagenomic index (MG-index) based on the FM-index data structure.
 Reference indices must be built prior to performing taxonomic classification.
 
-#### Reference file format & taxdump.tar.gz
+### Reference file format
 
 To construct the MG-indices, you'll need a multi-FASTA file of all reference sequences, with headers in the format `SEQID-TAXID`. So a sequence has a unique integer ID 12345, and belongs to the NCBI taxonomic ID 987, the header for that sequence should read `12345-987`. The reference sequences can be sourced from any DNA sequence collection (i.e., GenBank, RefSeq, etc.) and customized to fit your project. 
 
 
-#### Chunking reference database
+### Chunking reference database
 Because MTSv was designed to be highly parallelizable, we recommend building multiple indices from smaller chunks of the reference sequences. This helps reduce the memory requirements and allows for faster processing for both index building and assignment. 
 
 ```
@@ -107,7 +107,7 @@ OPTIONS:
     -g, --gb <SIZE_GB>       Chunk size (in gigabytes). [default: 1.0]
 ```
 
-#### Metagenomic index (MG-index)
+## Metagenomic index build (MG-index)
 
 Now that you have N chunks of your FASTA database, they need to be processed into indices which MTSv can use for querying. During the index build, the sequences in the chunked FASTA file are concatenated while recording the location of sequence boundaries and the TaxID associated with each sequence. A suffix array, Burrows-Wheeler Transform (BWT), and FM-index are built from the concatenated sequences using the Rust-Bio v0.39.1 package. The FM-index and the associated sequence metadata constitutes the MG-index. One MG-index is created per FASTA file, and new indices can be added as the reference collection grows without needing to rebuild any of the existing indices.
 
@@ -144,14 +144,14 @@ OPTIONS:
 
 
 
-### Binning Reads
+## Binning Reads
 The `mtsv-binner` command assignes the reads to reference sequences in the provided MG-index (a separate binning command should be run for each of the desired MG-Indices). It will begin by extracting overlapping substrings (seeds) of the same size (`--seed-size`) with certain offsets (`--seed-interval`) from each query sequence and its reverse complement. It then uses the MG-index to search for exact, ungapped matches for each seed. The seed matches are sorted by location and grouped into candidate regions using specified windows. The number of hits per candidate is tallied and any candidate that does not meet the minimum number of seed hits is filtered out. The remaining candidate positions are sorted in descending order by the number of seed hits so that the most promising regions are evaluated first. 
 
 For each candidate region, MTSv extracts the corresponding range from the reference sequence and looks up the TaxID associated with the region in the MG-index. If the current query has already been sucessfully aligned to the TaxID associated with the candidate region, no additional alignment is attempted, and the next candidate region is checked. Otherwise an SIMD-accelerated Smith-Waterman alignment is performed between the extracted reference sequence and the query sequence (using a scoring of 1 for matches and -1 for mismatches, gap opening, and gap extension). If the alignment score is sufficiently high, there is one final check to determine if the edit distance is less than or equal to the user-specified edit distance cutoff (`--edit-rate`). If the alignment is considered successful, then no further alignments are attempted for that query against the same TaxID. Skipping all additional alignments to a TaxID avoids many expensive operations and reduces computation time.
-#### Parameters
+### Parameters
 The candidate filtering step is based on a q-gram filtering algorithm which defines the minimum number of exact k-mer matches (from all ***n-k+1*** overlapping ***k***-mers that can be expected between an ***n***-length read and a reference sequence with at most e mismatches. In the worst case where all mismatches are evenly spaced across the alignment, the minimum number of matching ***k***-mers is: ***m = (n+1) - k(e+1)*** and ***m*** is positive when ***n/(e+1) > k***. If only every ***l***th overlapping ***k***-mer is used, the minimum number of matching ***k***-mers is expected to be ***m/l***. The edit distance cutoff, ***e***, is calculated as the product of the `--edit-rate` (float between 0 and 1) and the length of the read, *n*. The minimum seed cutoff for a candidate region is then calculated as m = ((n + 1) - k * (ceil(n * e) + 1)) / l where ***k*** is set by `--seed-size` and ***l*** is set by `--seed-interval`. If the parameter settings result in a negative seed cutoff, the value will be set to 1. The seed cutoff can also be scaled up or down using `--min-seed-scale`. The final calculation is min_seeds = max(floor((m) * s), 1), where ***s*** is the scaling factor. 
 
-##### Examples.
+#### Examples.
 If the read length is 150, the seed size is 16, the seed interval is 1, the edit threshold is 0.05 and the scaling factor is the default of 1, then the minimum seed cutoff will be 7. Because the seed interval covers all overlapping substrings, this guarantees that any candidate region with at least 7 seed hits will be a good alignment with at most 8 mismatches. The threshold can be scaled up or down using `--min-seed-scale` to be more or less stringent without changing the edit distance cutoff. 
 
 max( floor( (((150 + 1) - 16 * (8+1)) / 1) * 1  ), 1) = 7
@@ -195,7 +195,7 @@ OPTIONS:
         --seed-size <SEED_SIZE>              Set seed size. [default: 16]
 ```
 
-#### Output
+### Output
 
 `mtsv-binner` writes results for a single read per line. For example, if a read with the header `R1_123` maps to taxon IDs `562`, `9062`, and `100` with edit distances `5`, `10`, and `11`:
 
@@ -203,7 +203,7 @@ OPTIONS:
 R1_123:562=5,9062=10,100=11
 ```
 
-### Collapsing Results
+## Collapsing Results
 
 Since each output file from the `mtsv-binner` command will only represent assignments to references within a single MG-index, the results from all MG-indices must be combined into a single results file for further analysis. 
 
