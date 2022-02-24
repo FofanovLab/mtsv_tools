@@ -52,7 +52,8 @@ AAAACACATATTTTCAAATCTAGTAAATATTAAATCTACTCTTGACGATTGCACCAATGCTACGCGATATAGATATCCAC
         let outfile_path = outfile.to_path_buf();
         let outfile_str = outfile_path.to_str().unwrap();
 
-        build_and_write_index(records, outfile_str, 32).unwrap();
+
+        build_and_write_index(records, outfile_str, 32, 64).unwrap();
 
         assert!(outfile_path.exists());
         assert!(outfile_path.is_file());
@@ -76,6 +77,6 @@ TTTCACCTAGTACATTAAATACACGACCTAATGTTTCGTCACCAACAGGTACACTAATTTCTTTGCCTGTATCTTTTACA
         let outfile_path = outfile.to_path_buf();
         let outfile_str = outfile_path.to_str().unwrap();
 
-        build_and_write_index(records, outfile_str, 32).unwrap();
+        build_and_write_index(records, outfile_str, 32, 64).unwrap();
     }
 }

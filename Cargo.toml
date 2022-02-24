@@ -1,7 +1,8 @@
 [package]
 name = "mtsv"
-version = "0.4.0"
-authors = ["Adam Perry <adam.n.perry@gmail.com>"]
+version = "2.0.0"
+authors = ["Adam Perry <adam.n.perry@gmail.com>",
+            "Tara Furstenau <tara.furstenau@gmail.com>"]
 description = "Metagenomic binning and analysis"
 
 [package.metadata.bundle]

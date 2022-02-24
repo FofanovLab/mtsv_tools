@@ -13,7 +13,7 @@ use mtsv::collapse::collapse_edit_files;
 use mtsv::util;
 
 fn main() {
-    let args = App::new("mtsv-edit-collapse")
+    let args = App::new("mtsv-collapse")
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about("Tool for combining the output of multiple separate mtsv runs.")

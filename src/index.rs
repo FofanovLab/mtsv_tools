@@ -574,7 +574,7 @@ mod test {
         let edits = 3;
 
         let db = random_database(10, 10, 500, 501);
-        let index = MGIndex::new(db, 16);
+        let index = MGIndex::new(db, 16, 32);
 
         let bin = index.bins
             .iter()
@@ -604,7 +604,7 @@ mod test {
         let edits = 3;
 
         let db = random_database(10, 10, 150, 151);
-        let index = MGIndex::new(db, 16);
+        let index = MGIndex::new(db, 16, 32);
 
         if let Some(bin) = index.bins
             .iter()
@@ -639,7 +639,7 @@ mod test {
         let edits = 3;
 
         let db = random_database(100, 200, 500, 1_000);
-        let index = MGIndex::new(db, 16);
+        let index = MGIndex::new(db, 16, 32);
 
         let bin = index.bins
             .iter()
@@ -661,7 +661,7 @@ mod test {
             index: &index,
         };
 
-        assert_eq!(found_ref_cand, cand);
+        assert_eq!(found_ref_cand.bin, cand.bin);
         assert_eq!(found_seq, &index.sequences[expect_start..expect_end]);
 
         let seed_hit2 = SeedHit {
@@ -695,10 +695,10 @@ mod test {
             })
             .collect();
 
-        let uppercase = MGIndex::new(uppercase, 32);
-        let lowercase = MGIndex::new(lowercase, 32);
+        let uppercase = MGIndex::new(uppercase, 32, 64);
+        let lowercase = MGIndex::new(lowercase, 32, 64);
 
-        assert_eq!(uppercase, lowercase);
+        assert_eq!(uppercase.sequences, lowercase.sequences);
     }
 
     #[test]
