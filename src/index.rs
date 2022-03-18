@@ -256,7 +256,7 @@ impl MGIndex {
                             edit_freq: f64,
                             seed_length: usize,
                             seed_gap: usize,
-                            min_seeds_factor: f64,
+                            min_seeds_percent: f64,
                             max_hits: usize)
                             -> Vec<Hit> {
 
@@ -272,13 +272,13 @@ impl MGIndex {
 
         let seq_len = sequence.len() as f64;
         let edit_distance = (seq_len * edit_freq).ceil() as usize;
-        let ms = (seq_len + 1.0) - seed_length as f64 * (edit_distance as f64 + 1.0);
-        // calculate min seeds given length of read and other params
-        let min_seeds = (min_seeds_factor * (ms / seed_gap as f64)).floor().max(1.0) as usize;
 
         let seeds = (0..(sequence.len() + 1 - seed_length)) // get all seed start indices
             .step(seed_gap)                                 // skip over any in between seed gap
             .map(|i| (i, &sequence[i..i + seed_length]));   // create a reference into the query
+        let n_seeds = seeds.len() as f64;
+        // calculate min seeds given number of seeds and percent, force a minimum of 1 seed.
+        let min_seeds = (n_seeds * min_seeds_percent).floor().max(1.0) as usize;
 
         // find all of the reference regions which we'll align against
         let reference_candidates = {
@@ -348,10 +348,12 @@ impl MGIndex {
         let mut aligner = Aligner::new();
 
         let profile = Profile::new(sequence, &IDENT_W_PENALTY_NO_N_MATCH);
-        
+        // let mut n_skip = 0;
+        // let n_refs = reference_candidates.len();
         for candidate in reference_candidates {
             // see if we've already found this tax ID
             if let Some(_) = matches.iter().find(|&&t| t == candidate.bin.tax_id) {
+                // n_skip += 1;
                 continue;
             }
 
@@ -382,6 +384,7 @@ impl MGIndex {
                 }
             }
         }
+        // println!("Skipped Candidates: {0}/{1}", n_skip, n_refs);
 
         hits
     }
