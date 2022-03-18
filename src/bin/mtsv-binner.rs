@@ -55,22 +55,22 @@ fn main() {
             .long("edit-rate")
             .takes_value(true)
             .help("The maximum proportion of edits allowed for alignment.")
-            .default_value("0.1"))
+            .default_value("0.13"))
         .arg(Arg::with_name("SEED_SIZE")
             .long("seed-size")
             .takes_value(true)
             .help("Set seed size.")
-            .default_value("16"))
+            .default_value("18"))
         .arg(Arg::with_name("SEED_INTERVAL")
             .long("seed-interval")
             .takes_value(true)
             .help("Set the interval between seeds used for initial exact match.")
             .default_value("2"))
-        .arg(Arg::with_name("MIN_SEED_SCALE")
-            .long("min-seed-scale")
+        .arg(Arg::with_name("MIN_SEED")
+            .long("min-seed")
             .takes_value(true)
-            .help("Scale the minimum seed cutoff calculated for each read.")
-            .default_value("1"))
+            .help("Set the minimum percentage of seeds required to perform an alignment.")
+            .default_value("0.015"))
         .arg(Arg::with_name("MAX_HITS")
             .long("max-hits")
             .takes_value(true)
@@ -155,13 +155,16 @@ fn main() {
             None => panic!("Missing parameter: seed-interval"),
         };
 
-        let min_seeds = match args.value_of("MIN_SEED_SCALE") {
+        let min_seeds = match args.value_of("MIN_SEED") {
             Some(s) => {
-                let min_seeds = s.parse::<f64>().expect("Invalid min seed scaling factor entered!");
-                info!("Min Seed Scale: {}", min_seeds);
+                let min_seeds = s.parse::<f64>().expect("Invalid min seeds entered!");
+                info!("Min Seeds: {}", min_seeds);
+                if min_seeds <= 0.0 || min_seeds > 1.0 {
+                    panic!("Min seed percent must be between 0 and 1");
+                }
                 min_seeds
             },
-            None => panic!("Missing parameter: min-seed-scale"),
+            None => panic!("Missing parameter: min-seeds"),
         };
 
         let max_hits = match args.value_of("MAX_HITS") {
