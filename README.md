@@ -149,14 +149,8 @@ The `mtsv-binner` command assignes the reads to reference sequences in the provi
 
 For each candidate region, MTSv extracts the corresponding range from the reference sequence and looks up the TaxID associated with the region in the MG-index. If the current query has already been sucessfully aligned to the TaxID associated with the candidate region, no additional alignment is attempted, and the next candidate region is checked. Otherwise an SIMD-accelerated Smith-Waterman alignment is performed between the extracted reference sequence and the query sequence (using a scoring of 1 for matches and -1 for mismatches, gap opening, and gap extension). If the alignment score is sufficiently high, there is one final check to determine if the edit distance is less than or equal to the user-specified edit distance cutoff (`--edit-rate`). If the alignment is considered successful, then no further alignments are attempted for that query against the same TaxID. Skipping all additional alignments to a TaxID avoids many expensive operations and reduces computation time.
 ### Parameters
-The candidate filtering step is based on a q-gram filtering algorithm which defines the minimum number of exact k-mer matches (from all ***n-k+1*** overlapping ***k***-mers that can be expected between an ***n***-length read and a reference sequence with at most e mismatches. In the worst case where all mismatches are evenly spaced across the alignment, the minimum number of matching ***k***-mers is: ***m = (n+1) - k(e+1)*** and ***m*** is positive when ***n/(e+1) > k***. If only every ***l***th overlapping ***k***-mer is used, the minimum number of matching ***k***-mers is expected to be ***m/l***. The edit distance cutoff, ***e***, is calculated as the product of the `--edit-rate` (float between 0 and 1) and the length of the read, *n*. The minimum seed cutoff for a candidate region is then calculated as m = ((n + 1) - k * (ceil(n * e) + 1)) / l where ***k*** is set by `--seed-size` and ***l*** is set by `--seed-interval`. If the parameter settings result in a negative seed cutoff, the value will be set to 1. The seed cutoff can also be scaled up or down using `--min-seed-scale`. The final calculation is min_seeds = max(floor((m) * s), 1), where ***s*** is the scaling factor. 
+The candidate filtering step is based on a q-gram filtering algorithm which defines the minimum number of exact k-mer matches (from all ***n-k+1*** overlapping ***k***-mers that can be expected between an ***n***-length read and a reference sequence with at most e mismatches. In the worst case where all mismatches are evenly spaced across the alignment, the minimum number of matching ***k***-mers is: ***m = (n+1) - k(e+1)*** and ***m*** is positive when ***n/(e+1) > k***. If only every ***l***th overlapping ***k***-mer is used, the minimum number of matching ***k***-mers is expected to be ***m/l***. The user provides the seed ***k***-mer size (`--seed-size`) and the interval ***l*** (`--seed-interval`) which establishes the number of seeds as ***n_seeds = ceil((n - k + 1)/l)*** and because this varies based on read size, the minimum number of reads required to make an assignment (`--min-seed`) is provided as a percentage of these seeds ***floor(min-seed * n_seeds)***. Similarly, the edit distance threshold is calculated as the product of the `--edit-rate` (float between 0 and 1) and the length of the read, *n*.
 
-#### Examples.
-If the read length is 150, the seed size is 16, the seed interval is 1, the edit threshold is 0.05 and the scaling factor is the default of 1, then the minimum seed cutoff will be 7. Because the seed interval covers all overlapping substrings, this guarantees that any candidate region with at least 7 seed hits will be a good alignment with at most 8 mismatches. The threshold can be scaled up or down using `--min-seed-scale` to be more or less stringent without changing the edit distance cutoff. 
-
-max( floor( (((150 + 1) - 16 * (8+1)) / 1) * 1  ), 1) = 7
-
-For higher edit rates, the minimum seed cutoff will typically be the minimum value of 1. For example, if read length is 150, the seed size is 18, the seed interval is 2, the edit threshold is 0.13 the calculated minimum seed cutoff will be negative (-114). In this case the minimum value of 1 will be used. With these settings, we will nearly always find alignments with up to 7 mismatches but as the number of mismatches increases the likelihood decreases. 
 
 ```
 $ mtsv-binner --edit-rate 0.13 --seed-size 18 \
@@ -183,16 +177,17 @@ FLAGS:
     -V, --version    Prints version information
 
 OPTIONS:
-    -e, --edit-rate <EDIT_TOLERANCE>         The maximum proportion of edits allowed for alignment. [default: 0.1]
-    -f, --fasta <FASTA>                      Path to FASTA reads.
-    -f, --fastq <FASTQ>                      Path to FASTQ reads.
-    -i, --index <INDEX>                      Path to MG-index file.
-        --max-hits <MAX_HITS>                Skip seeds with more than MAX_HITS hits. [default: 20000]
-        --min-seed-scale <MIN_SEED_SCALE>    Scale the minimum seed cutoff calculated for each read. [default: 1]
-    -t, --threads <NUM_THREADS>              Number of worker threads to spawn. [default: 4]
-    -m, --results <RESULTS_PATH>             Path to write results file.
-        --seed-interval <SEED_INTERVAL>      Set the interval between seeds used for initial exact match. [default: 2]
-        --seed-size <SEED_SIZE>              Set seed size. [default: 16]
+    -e, --edit-rate <EDIT_TOLERANCE>       The maximum proportion of edits allowed for alignment. [default: 0.13]
+    -f, --fasta <FASTA>                    Path to FASTA reads.
+    -f, --fastq <FASTQ>                    Path to FASTQ reads.
+    -i, --index <INDEX>                    Path to MG-index file.
+        --max-hits <MAX_HITS>              Skip seeds with more than MAX_HITS hits. [default: 20000]
+        --min-seed <MIN_SEED>              Set the minimum percentage of seeds required to perform an alignment.
+                                           [default: 0.015]
+    -t, --threads <NUM_THREADS>            Number of worker threads to spawn. [default: 4]
+    -m, --results <RESULTS_PATH>           Path to write results file.
+        --seed-interval <SEED_INTERVAL>    Set the interval between seeds used for initial exact match. [default: 2]
+        --seed-size <SEED_SIZE>            Set seed size. [default: 18]
 ```
 
 ### Output
