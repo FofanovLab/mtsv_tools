@@ -14,7 +14,6 @@ use std::collections::BTreeMap;
 use std::fmt::{Debug};
 use std::hash::{Hash};
 use std::num::ParseIntError;
-use std::collections::HashMap;
 use std::str;
 use std::u32;
 
