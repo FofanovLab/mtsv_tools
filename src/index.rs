@@ -510,6 +510,22 @@ impl MGIndex {
             suffix_array: sampled_suffix_array,
         }
     }
+
+    /// Returns a vector of reference sequences for a given taxid using
+    /// bin offset slices.
+    pub fn get_references(&self,
+        taxid: u32) -> Vec<Sequence> {
+            let mut seqs = Vec::new();
+
+            for bin in &self.bins {
+                if bin.tax_id.0 == taxid {
+                    seqs.push(self.sequences[bin.start .. bin.end].to_vec());
+                }
+            }
+            info!("Returning {} reference sequences for taxid: {}", seqs.len(), taxid);
+            seqs
+        }
+
 }
 
 // this needs to be outside the test module so that integration tests can use it

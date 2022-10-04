@@ -305,7 +305,33 @@ pub fn write_single_line<W: Write>(header: &str,
     Ok(())
 }
 
+/// Get all reference sequences for given taxid from index
+///
+/// Writes to fasta file with headers ID-TAXID
+pub fn get_reference_sequences_from_index(
+    index_path: &str,
+    results_path: &str,
+    taxid: u32) -> MtsvResult<()> {
+     
+    let output_file = File::create(Path::new(results_path))?;
 
+    info!("Deserializing candidate filter: {}", index_path);
+    let filter = from_file::<MGIndex>(index_path)?;
+    info!("Getting reference sequences for taxid: {}", taxid);
+    let result_writer = BufWriter::new(output_file);
+    let seqs = filter.get_references(taxid);
+    let mut writer = fasta::Writer::new(result_writer);
+    let mut seq_id = 1;
+    for seq in seqs {
+        let name = format!("{}-{}", seq_id.to_string(), taxid.to_string());
+        writer.write(
+            &name,
+            None, seq.as_slice()).expect("Error writing record.");
+                seq_id += 1
+        }
+    info!("Sequences written to file: {}", results_path);
+    Ok(())
+    }
 
 
 /// Write the results for a single read to the Writer specified.
