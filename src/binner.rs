@@ -45,7 +45,8 @@ pub fn get_fasta_and_write_matching_bin_ids(input_path: &str,
                                             seed_size: usize,
                                             seed_gap: usize,
                                             min_seeds: f64,
-                                            max_hits: usize)
+                                            max_hits: usize,
+                                            tune_max_hits: usize)
                                             -> MtsvResult<()> {
 
     let mut fasta_reader = fasta::Reader::from_file(Path::new(input_path))?;
@@ -106,7 +107,8 @@ pub fn get_fasta_and_write_matching_bin_ids(input_path: &str,
                                         seed_size,
                                         seed_gap,
                                         min_seeds,
-                                        max_hits);
+                                        max_hits,
+                                        tune_max_hits);
 
 
         // get the reverse complement
@@ -118,7 +120,8 @@ pub fn get_fasta_and_write_matching_bin_ids(input_path: &str,
                                         seed_size,
                                         seed_gap,
                                         min_seeds,
-                                        max_hits);
+                                        max_hits,
+                                        tune_max_hits);
 
         // unify the result sets
 
@@ -172,7 +175,8 @@ pub fn get_fastq_and_write_matching_bin_ids(input_path: &str,
                                             seed_size: usize,
                                             seed_gap: usize,
                                             min_seeds: f64,
-                                            max_hits: usize)
+                                            max_hits: usize,
+                                            tune_max_hits: usize)
                                             -> MtsvResult<()> {
 
     let mut fastq_reader = fastq::Reader::from_file(Path::new(input_path))?;
@@ -233,7 +237,8 @@ pub fn get_fastq_and_write_matching_bin_ids(input_path: &str,
                                         seed_size,
                                         seed_gap,
                                         min_seeds,
-                                        max_hits);
+                                        max_hits,
+                                        tune_max_hits);
 
 
         // get the reverse complement
@@ -245,7 +250,8 @@ pub fn get_fastq_and_write_matching_bin_ids(input_path: &str,
                                             seed_size,
                                             seed_gap,
                                             min_seeds,
-                                            max_hits);
+                                            max_hits,
+                                            tune_max_hits);
 
         // unify the result sets
 

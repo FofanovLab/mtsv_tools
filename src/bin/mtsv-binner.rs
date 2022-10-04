@@ -65,7 +65,7 @@ fn main() {
             .long("seed-interval")
             .takes_value(true)
             .help("Set the interval between seeds used for initial exact match.")
-            .default_value("2"))
+            .default_value("15"))
         .arg(Arg::with_name("MIN_SEED")
             .long("min-seed")
             .takes_value(true)
@@ -76,6 +76,12 @@ fn main() {
             .takes_value(true)
             .help("Skip seeds with more than MAX_HITS hits.")
             .default_value("20000"))
+        .arg(Arg::with_name("TUNE_MAX_HITS")
+            .long("tune-max-hits")
+            .takes_value(true)
+            .help("Each time the number of seed hits is greater than TUNE_MAX_HITS \
+            but less than MAX_HITS, the seed interval will be doubled to reduce the number of seed hits and reduce runtime.")
+            .default_value("200"))
         .get_matches();
 
 
@@ -181,6 +187,15 @@ fn main() {
             },
             None => panic!("Missing parameter: max-hits"),
         };
+        let tune_max_hits = match args.value_of("TUNE_MAX_HITS") {
+            Some(s) => {
+                let tune_max_hits = s.parse::<usize>().expect("Invalid cutoff for max hits!");
+                info!("Tune Max Hits: {}", tune_max_hits);
+                tune_max_hits
+            },
+            None => panic!("Missing parameter: tune-max-hits"),
+        };
+        
 
         if results_path.is_none() {
             error!("No results path provided!");
@@ -197,7 +212,8 @@ fn main() {
                                                          seed_size,
                                                          seed_gap,
                                                          min_seeds,
-                                                         max_hits) {
+                                                         max_hits,
+                                                         tune_max_hits) {
                     Ok(_) => 0,
                     Err(why) => {
                         error!("Error running query: {}", why);
@@ -216,7 +232,8 @@ fn main() {
                                                         seed_size,
                                                         seed_gap,
                                                         min_seeds,
-                                                        max_hits) {
+                                                        max_hits,
+                                                        tune_max_hits) {
                     Ok(_) => 0,
                     Err(why) => {
                     error!("Error running query: {}", why);
