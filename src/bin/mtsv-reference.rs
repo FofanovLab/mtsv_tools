@@ -28,10 +28,10 @@ fn main() {
             .takes_value(true)
             .help("Output file path (FASTA)."))
         .arg(Arg::with_name("TAXID")
-            .short("t")
-            .long("taxid")
+            .index(1)
             .help("Extract reference sequences for taxid")
             .takes_value(true)
+            .multiple(true)
             .required(true))
         .arg(Arg::with_name("VERBOSE")
             .short("v")
@@ -48,14 +48,11 @@ fn main() {
 
     let index_path = args.value_of("INDEX").unwrap();
     let exit_code = {
-        let taxid = match args.value_of("TAXID") {
-            Some(s) => {
-                let taxid = s.parse::<u32>().expect("Invalid taxid, must be positive integer!");
-                info!("Taxid: {}", taxid);
-                taxid
-            },
-            None => panic!("Missing parameter: taxid"),
-        };
+
+
+        let tax_str = args.values_of("TAXID").unwrap().collect::<Vec<_>>();
+        let taxids: Vec<u32> = tax_str.iter().flat_map(|x| x.parse()).collect();
+
         let results_path = args.value_of("RESULTS_PATH");
         if results_path.is_none() {
             error!("No results path provided!");
@@ -63,7 +60,7 @@ fn main() {
         } else {
             let results_path = results_path.unwrap();
             match binner::get_reference_sequences_from_index(
-                index_path, results_path, taxid) {
+                index_path, results_path, taxids) {
                     Ok(_) => 0,
                     Err(why) => {
                         error!("Error running: {}", why);
