@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::fmt::{Debug};
 use std::hash::{Hash};
 use std::num::ParseIntError;
+use std::collections::HashMap;
 use std::str;
 use std::u32;
 
@@ -257,7 +258,8 @@ impl MGIndex {
                             seed_length: usize,
                             seed_gap: usize,
                             min_seeds_percent: f64,
-                            max_hits: usize)
+                            max_hits: usize,
+                            tune_max_hits: usize)
                             -> Vec<Hit> {
 
         // we need to later compare for edit distance where N's won't match against reference N's
@@ -276,14 +278,23 @@ impl MGIndex {
         let seeds = (0..(sequence.len() + 1 - seed_length)) // get all seed start indices
             .step(seed_gap)                                 // skip over any in between seed gap
             .map(|i| (i, &sequence[i..i + seed_length]));   // create a reference into the query
-        let n_seeds = seeds.len() as f64;
-        // calculate min seeds given number of seeds and percent, force a minimum of 1 seed.
-        let min_seeds = (n_seeds * min_seeds_percent).floor().max(1.0) as usize;
+        
 
         // find all of the reference regions which we'll align against
         let reference_candidates = {
             let mut bin_locations = Vec::new();
+
+            let mut n_seeds = 0.0;
+            let mut next_offset = 0;
+            let mut seed_interval = seed_gap;
             for (offset, seed) in seeds {
+                // if end of this seeds does not extend past end
+                // of last seed (due to seed expansion for high hit counts),
+                // skip this seed.
+                if offset < next_offset {
+                    continue;
+                }
+                
                 // find everywhere this seed occurs in the reference database
                 let interval = fmindex.backward_search(seed.iter());
                 // there are a few seeds which are SO prevalent they'll blow up memory usage if we don't
@@ -313,12 +324,18 @@ impl MGIndex {
                 if (interval_upper == 0) && (interval_lower == 0) {
                     continue;
                 }
-         
+                let n_hits = interval_upper - interval_lower;
                 // if too many seed hits were found, skip
-                if (interval_upper - interval_lower) > max_hits {
+                if n_hits > max_hits {
                     continue;
                 }
+                if n_hits > tune_max_hits{
+                    // each time n_Hits exceeds max hits,
+                    // double the seed interval
+                    seed_interval = seed_interval * 2;
+                    next_offset = offset + seed_interval;
 
+                }
 
                 // track a new SeedHit for each value in ther suffix array interval
                 bin_locations.extend(positions.occ(&self.suffix_array).iter().map(|i| {
@@ -327,7 +344,13 @@ impl MGIndex {
                         query_offset: offset,
                     }
                 }));
-            }
+
+                n_seeds += 1.0;
+                }
+
+            // calculate min seeds given number of seeds and percent, force a minimum of 1 seed.       
+            let min_seeds = (n_seeds * min_seeds_percent).floor().max(1.0) as usize;
+       
 
             // merge all of the seed hits into candidate regions we can align against
             let mut refs =
@@ -338,6 +361,7 @@ impl MGIndex {
 
             // sort in reverse by number of seeds -- check the most promising locations first
             refs.sort_by(|a, b| b.num_seeds.cmp(&a.num_seeds));
+
             refs
         };
 
@@ -389,7 +413,6 @@ impl MGIndex {
         hits
     }
 
-    // TODO test this function
     /// Combine a series of `SeedHit`s into a series of `ReferenceCandidate`s.
     fn coalesce_seed_sites(&self,
                            seed_hits: &mut [SeedHit],
@@ -397,6 +420,7 @@ impl MGIndex {
                            read_len: usize,
                            edit_distance: usize)
                            -> Vec<ReferenceCandidate> {
+    
         
         seed_hits.sort();
 
@@ -466,6 +490,34 @@ impl MGIndex {
                 bins.push(bin);
             }
         }
+        // info!("Concatenating all reference sequences and recording boundaries...");
+        // // Combine sequences from same taxids with a spacer
+        // let mut seq_map = HashMap::new();
+        // for (tax_id, references) in reference {
+        //     for (_gi, mut refseq) in references {
+        //         for _i in 1..10 {
+        //             refseq.push(b'N');
+
+        //         }
+        //         seq_map.entry(tax_id).or_insert(Sequence::new()).extend_from_slice(&refseq);
+        //     }
+        // }
+        
+        // // concatenate all of the sequences, recording a new bin for each sequence
+        // let mut seq = Vec::new();
+        // let mut bins = Vec::new();
+        // for (tax_id, reference) in seq_map {
+        //     let bin = Bin {
+        //         gi: Gi(0),
+        //         tax_id: tax_id,
+        //         start: seq.len(),
+        //         end: seq.len() + reference.len(),
+        //     };
+
+        //         seq.extend_from_slice(&reference);
+        //         bins.push(bin);
+            
+        // }
 
 
 
