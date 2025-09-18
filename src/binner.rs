@@ -345,51 +345,89 @@ pub fn get_reference_sequences_from_index(
 /// Write the results for a single read to the Writer specified.
 ///
 /// Writes in the format `READ_ID:TAX_ID1=EDIT,TAX_ID2=EDIT,...`. Read header/ID is first, followed by a
-/// colon (':'), followed by a comma-separated list of taxonomic IDs (positive integers) with their
-/// edit distances (positive integers) separated by equal sign ('=').
-pub fn write_edit_distances<W: Write>(header: &str,
-            hits: &Vec<Hit>,
-            writer: &mut W)
-            -> MtsvResult<()> {
-    if hits.len() == 0 {
+/// colon (':'), followed by a comma-separated list of taxonomic IDs (positive integers)
+/// and gi(gene id or other value in database) with their
+/// edit distances (positive integers) separated by equal sign ('='), {taxid}-{gi}={edit}.
+/// 
+
+pub fn write_edit_distances<W: Write>(
+    header: &str,
+    hits: &[Hit],              // prefer slice over &Vec
+    writer: &mut W,
+) -> MtsvResult<()> {
+    if hits.is_empty() {
         return Ok(());
     }
-    let mut hit_map:HashMap<TaxId, u32> = HashMap::new();
-    for hit in hits {
 
-        match hit_map.get(&hit.tax_id) {
-            // if taxid already exists in hashmap, only add if edit distance is smaller
-            Some(edit_distance) => {
-                if edit_distance > &hit.edit {
-                    hit_map.insert(hit.tax_id, hit.edit);
-                }
-            }
-            None => {
-                hit_map.insert(hit.tax_id, hit.edit);
-            }
-        }
+    // Keep the smallest edit per (taxid, gi) pair
+    let mut best: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    for h in hits {
+        let key = (h.tax_id, h.gi);
+        best
+            .entry(key)
+            .and_modify(|e| if h.edit < *e { *e = h.edit })
+            .or_insert(h.edit);
     }
 
+    // Build "taxid-gi=edit" parts and join with commas
+    let parts: Vec<String> = best
+        .iter()
+        .map(|(&(taxid, gi), &edit)| format!("{taxid}-{gi}={edit}"))
+        .collect();
 
-    let mut result_line = String::from(header);
-    result_line.push(':');
-    // iterate over hits and add to output string
+    let mut line = String::with_capacity(header.len() + 1 + parts.len() * 16);
+    line.push_str(header);
+    line.push(':');
+    line.push_str(&parts.join(","));
+    line.push('\n');
 
-    let mut hits_peek = hit_map.iter().peekable();
-    for (taxid, edit) in hit_map.iter() {
-        let _ = hits_peek.next();
-
-        result_line.push_str(&taxid.0.to_string());
-        result_line.push('=');
-        result_line.push_str(&edit.to_string());
-        if let Some(_) = hits_peek.peek() {
-            result_line.push(',');
-        }
-    }
-    result_line.push('\n');
-    writer.write(result_line.as_bytes())?;
+    writer.write_all(line.as_bytes())?;
     Ok(())
 }
+
+// pub fn write_edit_distances<W: Write>(header: &str,
+//             hits: &Vec<Hit>,
+//             writer: &mut W)
+//             -> MtsvResult<()> {
+//     if hits.len() == 0 {
+//         return Ok(());
+//     }
+//     let mut hit_map:HashMap<TaxId, u32> = HashMap::new();
+//     for hit in hits {
+
+//         match hit_map.get(&hit.tax_id) {
+//             // if taxid already exists in hashmap, only add if edit distance is smaller
+//             Some(edit_distance) => {
+//                 if edit_distance > &hit.edit {
+//                     hit_map.insert(hit.tax_id, hit.edit);
+//                 }
+//             }
+//             None => {
+//                 hit_map.insert(hit.tax_id, hit.edit);
+//             }
+//         }
+//     }
+
+
+//     let mut result_line = String::from(header);
+//     result_line.push(':');
+//     // iterate over hits and add to output string
+
+//     let mut hits_peek = hit_map.iter().peekable();
+//     for (taxid, edit) in hit_map.iter() {
+//         let _ = hits_peek.next();
+
+//         result_line.push_str(&taxid.0.to_string());
+//         result_line.push('=');
+//         result_line.push_str(&edit.to_string());
+//         if let Some(_) = hits_peek.peek() {
+//             result_line.push(',');
+//         }
+//     }
+//     result_line.push('\n');
+//     writer.write(result_line.as_bytes())?;
+//     Ok(())
+// }
 
 
 #[cfg(test)]

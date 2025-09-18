@@ -30,6 +30,8 @@ pub struct Gi(pub u32);
 pub struct Hit {
     /// The taxid of the hit (TaxId)
     pub tax_id: TaxId,
+    /// The Gene-id or secondary number of the hit (Gi)
+    pub gi: Gi,
     /// Edit distance of the alignment (u32)
     pub edit: u32
 }
@@ -400,6 +402,7 @@ impl MGIndex {
 
                     let hit = Hit {
                         tax_id: candidate.bin.tax_id,
+                        gi: candidate.bin.gi,
                         edit: edits
                     };
                     
