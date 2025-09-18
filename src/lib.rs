@@ -29,13 +29,10 @@ extern crate clap;
 extern crate cue;
 extern crate env_logger;
 extern crate itertools;
-extern crate rustc_serialize;
+
 extern crate ssw;
-extern crate stopwatch;
 extern crate serde;
 
-#[cfg(test)]
-extern crate mktemp;
 
 #[cfg(test)]
 #[macro_use]

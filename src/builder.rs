@@ -32,7 +32,7 @@ pub fn build_and_write_index<R>(records: R,
 #[cfg(test)]
 mod test {
     use bio::io::fasta::Reader;
-    use mktemp::Temp;
+    use tempfile::{NamedTempFile, tempdir};
     use std::io::Cursor;
     use super::build_and_write_index;
 
@@ -48,7 +48,7 @@ TTTCACCTAGTACATTAAATACACGACCTAATGTTTCGTCACCAACAGGTACACTAATTTCTTTGCCTGTATCTTTTACA
 AAAACACATATTTTCAAATCTAGTAAATATTAAATCTACTCTTGACGATTGCACCAATGCTACGCGATATAGATATCCACTAAAAACATACGTAATCATAACCATCATTGTTAGAAACAAAATTATTTCCATGATAACCCTCACTTAATATATTTCTAAAATTTTTCACTACGAATTAAGGCATAAAATAAATACAAAACTAATGCAATAACTACCAGTAATAAAACGATGAGCATTGCCATAACC";
 
         let records = Reader::new(Cursor::new(reference.as_bytes())).records();
-        let outfile = Temp::new_file().unwrap();
+        let outfile = NamedTempFile::new()?;    
         let outfile_path = outfile.to_path_buf();
         let outfile_str = outfile_path.to_str().unwrap();
 
@@ -73,7 +73,7 @@ TGTCTTAATGATAAAAATTGTTACAAACAGTTTAACATATTTAGCTACCTATTTTGCATATAAAAAACATGCTTGCATAC
 TTTCACCTAGTACATTAAATACACGACCTAATGTTTCGTCACCAACAGGTACACTAATTTCTTTGCCTGTATCTTTTACATCCATGCCTCTTTGGACACCATCAGTTGAATCCATCGCAATTGTACGAACAACGTCGTCACCTAATTGCAGCGCAACTTCTAATGTTAGTTGTATTGTACCTTCTTCTTTAGGCACATCAATAACCAAGGCGTTATTAATTTTAGGAACTTCGTTATGTTCAAATCGAACATCAATTACAGGACCCATAACTTGAGTTACACGGCCAATTCCCATGC";
 
         let records = Reader::new(Cursor::new(reference.as_bytes())).records();
-        let outfile = Temp::new_file().unwrap();
+        let outfile = NamedTempFile::new()?;
         let outfile_path = outfile.to_path_buf();
         let outfile_str = outfile_path.to_str().unwrap();
 

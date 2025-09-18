@@ -69,7 +69,7 @@ mod test {
     use bio::io::fasta;
     use index::{Database, random_database};
     use io::parse_fasta_db;
-    use mktemp::Temp;
+    use tempfile::{NamedTempFile, tempdir};
     use std::fmt::Debug;
     use std::path::Path;
     use super::*;
@@ -95,7 +95,7 @@ mod test {
     fn chunk_roundtrip() {
         let db = random_database(100, 200, 500, 10_000);
 
-        let dir = Temp::new_dir().unwrap();
+        let dir = let dir  = tempdir()?;
         let dir = dir.to_path_buf();
 
         let chunks = write_db_chunks(&db, "tmp_fasta", &dir, 0.001).unwrap();

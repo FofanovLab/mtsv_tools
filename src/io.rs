@@ -174,7 +174,8 @@ mod test {
     use ::binner::write_single_line;
     use ::index::TaxId;
 
-    use mktemp::Temp;
+    use tempfile::{NamedTempFile, tempdir};
+
 
     use rand::{Rng, XorShiftRng};
     use std::collections::{BTreeMap, BTreeSet};
@@ -306,7 +307,7 @@ asldkfj:3,4,5,6")
 
     quickcheck! {
         fn io_helpers(map: BTreeMap<String, String>) -> bool {
-            let outfile = Temp::new_file().unwrap();
+            let outfile = NamedTempFile::new().unwrap();
             let outfile = outfile.to_path_buf();
             let outfile = outfile.to_str().unwrap();
 

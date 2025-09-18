@@ -14,7 +14,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::process::exit;
-use stopwatch::Stopwatch;
+use std::time::Instant;
 
 /// Execute metagenomic binning queries in parallel.
 ///
@@ -66,7 +66,7 @@ pub fn get_fasta_and_write_matching_bin_ids(input_path: &str,
     
     info!("Beginning queries.");
 
-    let timer = Stopwatch::start_new();
+    let timer = Instant::now();
 
 
     pipeline("taxonomic binning",
@@ -142,7 +142,7 @@ pub fn get_fasta_and_write_matching_bin_ids(input_path: &str,
     });
 
     info!("All worker and result consumer threads terminated. Took {} seconds.",
-          timer.elapsed_ms() as f32 / 1000.0);
+          timer.elapsed().as_millis() as f32 / 1000.0);
     Ok(())
 }
 
@@ -196,7 +196,7 @@ pub fn get_fastq_and_write_matching_bin_ids(input_path: &str,
     
     info!("Beginning queries.");
 
-    let timer = Stopwatch::start_new();
+    let timer = Instant::now();
 
 
     pipeline("taxonomic binning",
@@ -273,7 +273,7 @@ pub fn get_fastq_and_write_matching_bin_ids(input_path: &str,
     });
 
     info!("All worker and result consumer threads terminated. Took {} seconds.",
-          timer.elapsed_ms() as f32 / 1000.0);
+          timer.elapsed().as_millis() as f32 / 1000.0);
     Ok(())
 }
     
