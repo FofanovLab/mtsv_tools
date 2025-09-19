@@ -3,7 +3,6 @@ extern crate log;
 
 extern crate bio;
 extern crate clap;
-extern crate rustc_serialize;
 extern crate mtsv;
 
 use mtsv::prep::*;
