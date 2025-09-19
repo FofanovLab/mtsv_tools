@@ -4,7 +4,7 @@ use serde::{Serialize};
 use bincode::{deserialize_from, serialize_into};
 use bio::io::fasta;
 use error::*;
-use index::{Database, TaxId, Hit};
+use index::{Database, TaxId, Hit, Gi};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io;

@@ -7,7 +7,7 @@ use cue::pipeline;
 use bio::data_structures::fmindex::{FMIndex};
 
 use error::*;
-use index::{MGIndex, TaxId, Hit};
+use index::{MGIndex, TaxId, Hit, Gi, TaxId};
 use io::from_file;
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
@@ -360,10 +360,12 @@ pub fn write_edit_distances<W: Write>(
     }
 
     // keep smallest edit per (taxid, gi)
-    let mut best: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut best: HashMap<(TaxId, Gi), u32> = HashMap::new();
+
     for h in hits {
-        let key = (h.tax_id, h.gi);
-        best.entry(key)
+        let key = (h.tax_id, h.gi); // <-- use newtypes directly
+        best
+            .entry(key)
             .and_modify(|e| if h.edit < *e { *e = h.edit })
             .or_insert(h.edit);
     }
