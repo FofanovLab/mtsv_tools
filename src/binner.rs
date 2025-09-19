@@ -7,7 +7,7 @@ use cue::pipeline;
 use bio::data_structures::fmindex::{FMIndex};
 
 use error::*;
-use index::{MGIndex, TaxId, Hit};
+use index::{MGIndex, TaxId, Hit, Gi};
 use io::from_file;
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
@@ -379,7 +379,7 @@ pub fn write_edit_distances<W: Write>(
     for ((taxid, gi), edit) in best.iter() {
         if !first { line.push(','); } else { first = false; }
         use std::fmt::Write as _;
-        let _ = write!(line, "{}-{}={}", taxid, gi, edit);
+        let _ = write!(line, "{}-{}={}", taxid.0, gi.0, edit);
     }
     line.push('\n');
 
