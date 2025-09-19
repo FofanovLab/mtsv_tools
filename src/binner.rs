@@ -7,7 +7,7 @@ use cue::pipeline;
 use bio::data_structures::fmindex::{FMIndex};
 
 use error::*;
-use index::{MGIndex, TaxId, Hit, Gi, TaxId};
+use index::{MGIndex, TaxId, Hit};
 use io::from_file;
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;

@@ -5,7 +5,7 @@ use error::*;
 use io::{parse_findings, parse_edit_distance_findings};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{BufRead, Write};
-use index::{TaxId, Hit};
+use index::{TaxId, Hit, Gi};
 
 /// Given a list of mtsv results file paths, collapse into a single one.
 pub fn collapse_files<R, W>(files: &mut [R], write_to: &mut W) -> MtsvResult<()>
@@ -69,7 +69,7 @@ pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W) -> MtsvResul
         for (key, value) in hit_map.into_iter() {
             let hit = Hit {
                 tax_id: key,
-                gi: 0,
+                gi: Gi(0),
                 edit: value
             };
             combined_hits.push(hit);
