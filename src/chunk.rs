@@ -95,7 +95,7 @@ mod test {
     fn chunk_roundtrip() {
         let db = random_database(100, 200, 500, 10_000);
 
-        let dir = let dir  = tempdir()?;
+        let dir  = tempdir()?;
         let dir = dir.to_path_buf();
 
         let chunks = write_db_chunks(&db, "tmp_fasta", &dir, 0.001).unwrap();

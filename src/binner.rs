@@ -352,33 +352,33 @@ pub fn get_reference_sequences_from_index(
 
 pub fn write_edit_distances<W: Write>(
     header: &str,
-    hits: &[Hit],              // prefer slice over &Vec
+    hits: &[Hit],
     writer: &mut W,
 ) -> MtsvResult<()> {
     if hits.is_empty() {
         return Ok(());
     }
 
-    // Keep the smallest edit per (taxid, gi) pair
-    let mut best: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    // keep smallest edit per (taxid, gi)
+    let mut best: HashMap<(u32, u32), u32> = HashMap::new();
     for h in hits {
         let key = (h.tax_id, h.gi);
-        best
-            .entry(key)
+        best.entry(key)
             .and_modify(|e| if h.edit < *e { *e = h.edit })
             .or_insert(h.edit);
     }
 
-    // Build "taxid-gi=edit" parts and join with commas
-    let parts: Vec<String> = best
-        .iter()
-        .map(|(&(taxid, gi), &edit)| format!("{taxid}-{gi}={edit}"))
-        .collect();
-
-    let mut line = String::with_capacity(header.len() + 1 + parts.len() * 16);
+    // build "taxid-gi=edit"
+    let mut line = String::with_capacity(header.len() + 1 + best.len() * 16);
     line.push_str(header);
     line.push(':');
-    line.push_str(&parts.join(","));
+
+    let mut first = true;
+    for ((taxid, gi), edit) in best.iter() {
+        if !first { line.push(','); } else { first = false; }
+        use std::fmt::Write as _;
+        let _ = write!(line, "{}-{}={}", taxid, gi, edit);
+    }
     line.push('\n');
 
     writer.write_all(line.as_bytes())?;

@@ -145,6 +145,7 @@ pub fn parse_edit_distance_findings<'a, R: BufRead + 'a>
                 // append this hit
                 let hit = Hit {
                         tax_id: tax,
+                        gi: Gi(0),     
                         edit: edit
                     };
                 hits.push(hit);
