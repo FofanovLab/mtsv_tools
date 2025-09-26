@@ -32,6 +32,8 @@ pub struct Hit {
     pub tax_id: TaxId,
     /// The Gene-id or secondary number of the hit (Gi)
     pub gi: Gi,
+
+    pub offset: usize,
     /// Edit distance of the alignment (u32)
     pub edit: u32
 }
@@ -403,6 +405,7 @@ impl MGIndex {
                     let hit = Hit {
                         tax_id: candidate.bin.tax_id,
                         gi: candidate.bin.gi,
+                        offset: candidate.bin.start,
                         edit: edits
                     };
                     
@@ -436,7 +439,7 @@ impl MGIndex {
         for &mut sh in seed_hits {
 
             // if the site is ahead of the current bin, we need to advance the bin
-            while curr_bin.end <= sh.reference_offset {
+            while curr_bin.end <= sh.reference_offset { 
                 curr_bin = bin_iter.next().unwrap();
 
             }

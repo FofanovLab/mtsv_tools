@@ -43,7 +43,7 @@ pub fn parse_fasta_db<R>(records: R) -> MtsvResult<Database>
         let record = (record)?;
 
         let (gi, tax_id) = parse_read_header(record.id())?;
-
+        print!(taxid);
         let sequences = taxon_map.entry(tax_id).or_insert_with(|| vec![]);
         sequences.push((gi, record.seq().to_vec()));
     }

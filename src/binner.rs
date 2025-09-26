@@ -349,6 +349,9 @@ pub fn get_reference_sequences_from_index(
 /// and gi(gene id or other value in database) with their
 /// edit distances (positive integers) separated by equal sign ('='), {taxid}-{gi}={edit}.
 /// 
+use std::collections::HashMap;
+use std::io::Write;
+use std::fmt::Write as FmtWrite; // for write!(String, ...)
 
 pub fn write_edit_distances<W: Write>(
     header: &str,
@@ -359,33 +362,40 @@ pub fn write_edit_distances<W: Write>(
         return Ok(());
     }
 
-    // keep smallest edit per (taxid, gi)
-    let mut best: HashMap<(TaxId, Gi), u32> = HashMap::new();
-
+    // keep smallest edit per (taxid, gi, offset)
+    let mut best: HashMap<(TaxId, Gi, usize), u32> = HashMap::new();
     for h in hits {
-        let key = (h.tax_id, h.gi); // <-- use newtypes directly
-        best
-            .entry(key)
-            .and_modify(|e| if h.edit < *e { *e = h.edit })
+        let key = (h.tax_id, h.gi, h.offset);
+        best.entry(key)
+            .and_modify(|e| { if h.edit < *e { *e = h.edit; } })
             .or_insert(h.edit);
     }
 
-    // build "taxid-gi=edit"
-    let mut line = String::with_capacity(header.len() + 1 + best.len() * 16);
+    // build "{read}:{taxid}-{gi}-{offset}={edit},..."
+    let mut line = String::with_capacity(header.len() + 1 + best.len() * 24);
     line.push_str(header);
     line.push(':');
 
+    // (optional) deterministic order
+    let mut items: Vec<((TaxId, Gi, usize), u32)> = best.into_iter().collect();
+    items.sort_by(|a, b| {
+        a.0.0.cmp(&b.0.0)                // taxid
+            .then(a.0.1.cmp(&b.0.1))     // gi
+            .then(a.0.2.cmp(&b.0.2))     // offset
+            .then(a.1.cmp(&b.1))         // edit (tie-break)
+    });
+
     let mut first = true;
-    for ((taxid, gi), edit) in best.iter() {
+    for ((taxid, gi, off), edit) in items {
         if !first { line.push(','); } else { first = false; }
-        use std::fmt::Write as _;
-        let _ = write!(line, "{}-{}={}", taxid.0, gi.0, edit);
+        let _ = write!(line, "{}-{}-{}={}", taxid.0, gi.0, off, edit);
     }
     line.push('\n');
 
     writer.write_all(line.as_bytes())?;
     Ok(())
 }
+
 
 // pub fn write_edit_distances<W: Write>(header: &str,
 //             hits: &Vec<Hit>,
