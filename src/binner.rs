@@ -15,6 +15,8 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::process::exit;
 use std::time::Instant;
+use std::io::Write;
+use std::fmt::Write as FmtWrite; // for write!(String, ...)
 
 /// Execute metagenomic binning queries in parallel.
 ///
