@@ -70,6 +70,7 @@ pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W) -> MtsvResul
             let hit = Hit {
                 tax_id: key,
                 gi: Gi(0),
+                offset: 0,
                 edit: value
             };
             combined_hits.push(hit);

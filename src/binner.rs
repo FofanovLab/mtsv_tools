@@ -349,9 +349,6 @@ pub fn get_reference_sequences_from_index(
 /// and gi(gene id or other value in database) with their
 /// edit distances (positive integers) separated by equal sign ('='), {taxid}-{gi}={edit}.
 /// 
-use std::collections::HashMap;
-use std::io::Write;
-use std::fmt::Write as FmtWrite; // for write!(String, ...)
 
 pub fn write_edit_distances<W: Write>(
     header: &str,

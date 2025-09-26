@@ -43,7 +43,6 @@ pub fn parse_fasta_db<R>(records: R) -> MtsvResult<Database>
         let record = (record)?;
 
         let (gi, tax_id) = parse_read_header(record.id())?;
-        print!(taxid);
         let sequences = taxon_map.entry(tax_id).or_insert_with(|| vec![]);
         sequences.push((gi, record.seq().to_vec()));
     }
@@ -145,7 +144,8 @@ pub fn parse_edit_distance_findings<'a, R: BufRead + 'a>
                 // append this hit
                 let hit = Hit {
                         tax_id: tax,
-                        gi: Gi(0),     
+                        gi: Gi(0),
+                        offset: 0,    
                         edit: edit
                     };
                 hits.push(hit);
