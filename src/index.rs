@@ -379,33 +379,38 @@ impl MGIndex {
         // let n_refs = reference_candidates.len();
         for candidate in reference_candidates {
             // see if we've already found this tax ID
+            let taxid = candidate.bin.tax_id;
+
+            // print every candidate's taxid
+            println!("candidate taxid: {}", taxid.0);
             if let Some(_) = matches.iter().find(|&&t| t == candidate.bin.tax_id) {
                 // n_skip += 1;
                 continue;
             }
+            println!("candidate not yet found");
 
             // see if there's a match in the search candidate
             // if there is, record the hit tax id and then advance to the next candidate
 
             let cand_seq = candidate.candidate_seq();
-
+            println!("candidate seq len: {}", cand_seq.len());
             let score = profile.align_score(cand_seq, 1, 1);
 
             // -1 for substitution, -1 for gap open, -1 for gap extend
             // means that we need to allow for a hit to the alignment score of up to 1.5x editdist
             if score as usize >= sequence.len() - (edit_distance * 2) {
-
+                println!("candidate passed sw score threshold");
                 // the SW check is faster (w/ SIMD) than the min_edit_distance check, so if we're
                 // within an acceptable tolerance, now do the expensive check
                 let edits = aligner.min_edit_distance(&seq_no_n, cand_seq);
-                
+                println!("candidate edit distance: {}", edits);
                 if edits as usize <= edit_distance {
                     matches.push(candidate.bin.tax_id);
 
                     let hit = Hit {
                         tax_id: candidate.bin.tax_id,
                         gi: candidate.bin.gi,
-                        offset: candidate.bin.start,
+                        offset: candidate.reference_start - candidate.bin.start,
                         edit: edits
                     };
                     
