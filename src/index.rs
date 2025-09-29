@@ -410,7 +410,7 @@ impl MGIndex {
                     let hit = Hit {
                         tax_id: candidate.bin.tax_id,
                         gi: candidate.bin.gi,
-                        offset: candidate.reference_start - candidate.bin.start,
+                        offset: candidate.reference_start.saturating_sub(candidate.bin.start),
                         edit: edits
                     };
                     
