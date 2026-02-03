@@ -1,7 +1,7 @@
 //! Utilities for chunking database files.
 
-use error::*;
-use index::Database;
+use crate::error::*;
+use crate::index::Database;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -67,8 +67,8 @@ pub fn write_db_chunks(records: &Database,
 #[cfg(test)]
 mod test {
     use bio::io::fasta;
-    use index::{Database, random_database};
-    use io::parse_fasta_db;
+    use crate::index::{Database, random_database};
+    use crate::io::parse_fasta_db;
     use tempfile::{NamedTempFile, tempdir};
     use std::fmt::Debug;
     use std::path::Path;

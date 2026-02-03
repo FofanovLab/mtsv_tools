@@ -3,14 +3,14 @@
 use serde::{Serialize};
 use bincode::{deserialize_from, serialize_into};
 use bio::io::fasta;
-use error::*;
-use index::{Database, TaxId, Hit, Gi};
+use crate::error::*;
+use crate::index::{Database, TaxId, Hit, Gi};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, BufWriter};
 use std::path::Path;
-use util::parse_read_header;
+use crate::util::parse_read_header;
 
 /// Parse an arbitrary `Decodable` type from a file path.
 pub fn from_file<T>(p: &str) -> MtsvResult<T>
@@ -172,8 +172,8 @@ pub fn parse_edit_distance_findings<'a, R: BufRead + 'a>
 #[cfg(test)]
 mod test {
 
-    use ::binner::write_single_line;
-    use ::index::TaxId;
+    use crate::binner::write_single_line;
+    use crate::index::TaxId;
 
     use tempfile::{NamedTempFile, tempdir};
 

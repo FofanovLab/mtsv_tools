@@ -1,8 +1,8 @@
 //! Collapse multiple mtsv results/findings files into a single one.
 
-use binner::write_single_line;
-use error::*;
-use io::parse_findings;
+use crate::binner::write_single_line;
+use crate::error::*;
+use crate::io::parse_findings;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::fs::{self, File};
@@ -11,7 +11,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use index::{TaxId, Gi};
+use crate::index::{TaxId, Gi};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Collapse mode for edit-distance results.

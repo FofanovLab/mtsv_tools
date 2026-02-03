@@ -6,9 +6,9 @@ use bio::io::{fasta, fastq};
 use cue::pipeline;
 use bio::data_structures::fmindex::{FMIndex};
 
-use error::*;
-use index::{MGIndex, TaxId, Hit, Gi};
-use io::from_file;
+use crate::error::*;
+use crate::index::{MGIndex, TaxId, Hit, Gi};
+use crate::io::from_file;
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
@@ -383,7 +383,7 @@ pub fn write_assignments<W: Write>(
 
 #[cfg(test)]
 mod test {
-    use ::index::TaxId;
+    use crate::index::TaxId;
     use std::collections::BTreeSet;
     use super::*;
     use flate2::write::GzEncoder;

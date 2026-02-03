@@ -1,6 +1,6 @@
 //! The core metagenomic index used for queries.
 
-use align::Aligner;
+use crate::align::Aligner;
 use bio::alphabets;
 use bio::data_structures::bwt::{bwt, less, Less, Occ, BWT};
 use bio::data_structures::fmindex::{BackwardSearchResult, FMIndex, FMIndexable, Interval};

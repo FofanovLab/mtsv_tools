@@ -3,7 +3,7 @@ use bio::io::fastq;
 use bio::io::fastq::Reader;
 use clap::{App, Arg, ArgGroup, ArgMatches};
 
-use error::MtsvResult;
+use crate::error::MtsvResult;
 use std::cmp::min;
 use std::path::{Path, PathBuf};
 use bio::io::fastq::FastqRead;
@@ -210,7 +210,7 @@ pub fn parse_config(args: &ArgMatches) -> MtsvResult<PrepConfig> {
         infiles.push((p, md));
     }
 
-    let overall_min_read_len = infiles.iter().map(|&(_, ref md)| md.read_len).min().unwrap();
+    let overall_min_read_len = infiles.iter().map(|(_, md)| md.read_len).min().unwrap();
 
     let trim = if args.is_present("LCD") {
         TrimType::LcdFirstN(overall_min_read_len)

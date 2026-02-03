@@ -4,9 +4,9 @@
 use bio::io::fastq::Reader;
 use cue::pipeline;
 
-use error::MtsvResult;
+use crate::error::MtsvResult;
 use itertools::Itertools;
-use prep_config::{PrepConfig, TrimType};
+use crate::prep_config::{PrepConfig, TrimType};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -243,7 +243,7 @@ mod tests {
     // use std::cmp;
     // use std::path::Path;
     use super::*;
-    use prep_config::{PrepConfig, TrimType};
+    use crate::prep_config::{PrepConfig, TrimType};
     use std::path::PathBuf;
 
     #[test]

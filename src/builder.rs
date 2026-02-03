@@ -2,9 +2,9 @@
 
 use bio::io::fasta;
 
-use error::*;
-use index::MGIndex;
-use io::{parse_fasta_db, write_to_file};
+use crate::error::*;
+use crate::index::MGIndex;
+use crate::io::{parse_fasta_db, write_to_file};
 use std::io;
 
 /// Build and write the metagenomic index to disk.
@@ -35,8 +35,8 @@ mod test {
     use tempfile::{NamedTempFile, tempdir};
     use std::io::Cursor;
     use super::build_and_write_index;
-    use io::from_file;
-    use index::MGIndex;
+    use crate::io::from_file;
+    use crate::index::MGIndex;
 
     #[test]
     fn success() {

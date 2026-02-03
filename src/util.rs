@@ -2,8 +2,8 @@
 
 use chrono::Local;
 use env_logger::LogBuilder;
-use error::*;
-use index::{Gi, TaxId};
+use crate::error::*;
+use crate::index::{Gi, TaxId};
 use log::{LogLevelFilter, LogRecord};
 
 /// Initialize the program-wide logger to write to stdout with timestamps.
@@ -56,7 +56,7 @@ pub fn parse_read_header(h: &str) -> MtsvResult<(Gi, TaxId)> {
 
 #[cfg(test)]
 mod test {
-    use index::{Gi, TaxId};
+    use crate::index::{Gi, TaxId};
 
     use log::LogLevelFilter;
     use super::{init_logging, parse_read_header};
