@@ -35,6 +35,8 @@ mod test {
     use tempfile::{NamedTempFile, tempdir};
     use std::io::Cursor;
     use super::build_and_write_index;
+    use io::from_file;
+    use index::MGIndex;
 
     #[test]
     fn success() {
@@ -78,5 +80,20 @@ TTTCACCTAGTACATTAAATACACGACCTAATGTTTCGTCACCAACAGGTACACTAATTTCTTTGCCTGTATCTTTTACA
         let outfile_str = outfile_path.to_str().unwrap();
 
         build_and_write_index(records, outfile_str, 32, 64).unwrap();
+    }
+
+    #[test]
+    fn build_and_read_back() {
+        let reference = ">1-9\nACGTACGT\n>2-9\nTTTTAAAA\n";
+        let records = Reader::new(Cursor::new(reference.as_bytes())).records();
+        let outfile = NamedTempFile::new().unwrap();
+        let outfile_path = outfile.to_path_buf();
+        let outfile_str = outfile_path.to_str().unwrap();
+
+        build_and_write_index(records, outfile_str, 8, 8).unwrap();
+
+        let index: MGIndex = from_file(outfile_str).unwrap();
+        assert!(!index.sequences.is_empty());
+        assert_eq!(2, index.bins.len());
     }
 }

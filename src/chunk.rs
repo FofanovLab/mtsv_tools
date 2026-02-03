@@ -104,4 +104,15 @@ mod test {
 
         assert_eq!(db, expected);
     }
+
+    #[test]
+    fn chunk_requires_directory() {
+        let db = random_database(2, 2, 10, 20);
+        let tmp = NamedTempFile::new().unwrap();
+        let err = write_db_chunks(&db, "tmp_fasta", tmp.path(), 0.001).unwrap_err();
+        match err {
+            MtsvError::MissingFile(_) => (),
+            _ => panic!("Expected MissingFile error"),
+        }
+    }
 }

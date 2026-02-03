@@ -394,6 +394,21 @@ mod test {
         assert_eq!(parsed, expected);
     }
 
+    #[test]
+    fn quality_filters() {
+        let passed = "mtsv-readprep \
+                      --segment 50 --quality_min 20 --quality_threshold 5 \
+                      --out /dev/null \
+                      tests/prep/sample1.fastq tests/prep/sample2.fastq";
+
+        let app = prep_cli_app();
+        let args = app.get_matches_from_safe(passed.split(' ')).unwrap();
+        let parsed = parse_config(&args).unwrap();
+
+        assert_eq!(parsed.min_quality, Some(20));
+        assert_eq!(parsed.quality_threshold, Some(5));
+    }
+
     // #[test]
     // fn test_subadapters() {
     //     let expected = vec!["AAG",

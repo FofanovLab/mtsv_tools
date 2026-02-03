@@ -75,6 +75,14 @@ mod test {
     }
 
     #[test]
+    fn success_leading_zeros() {
+        let (found_gi, found_tax) = parse_read_header("0001-0002").unwrap();
+
+        assert_eq!(found_gi, Gi(1));
+        assert_eq!(found_tax, TaxId(2));
+    }
+
+    #[test]
     #[should_panic]
     fn fail_empty_nodash() {
         let _ = parse_read_header("").unwrap();

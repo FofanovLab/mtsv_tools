@@ -75,13 +75,32 @@ fn main() {
             .long("max-hits")
             .takes_value(true)
             .help("Skip seeds with more than MAX_HITS hits.")
-            .default_value("20000"))
+            .default_value("2000"))
         .arg(Arg::with_name("TUNE_MAX_HITS")
             .long("tune-max-hits")
             .takes_value(true)
             .help("Each time the number of seed hits is greater than TUNE_MAX_HITS \
             but less than MAX_HITS, the seed interval will be doubled to reduce the number of seed hits and reduce runtime.")
             .default_value("200"))
+        .arg(Arg::with_name("MAX_ASSIGNMENTS")
+            .long("max-assignments")
+            .takes_value(true)
+            .help("Stop after this many successful assignments per read."))
+        .arg(Arg::with_name("MAX_CANDIDATES")
+            .long("max-candidates")
+            .takes_value(true)
+            .help("Stop checking candidates after this many per read."))
+        .arg(Arg::with_name("READ_OFFSET")
+            .long("read-offset")
+            .takes_value(true)
+            .help("Skip this many reads before processing.")
+            .default_value("0"))
+        .arg(Arg::with_name("OUTPUT_FORMAT")
+            .long("output-format")
+            .takes_value(true)
+            .possible_values(&["default", "long"])
+            .help("Output format: default (taxid=edit) or long (taxid-gi-offset=edit).")
+            .default_value("default"))
         .get_matches();
 
 
@@ -195,6 +214,35 @@ fn main() {
             },
             None => panic!("Missing parameter: tune-max-hits"),
         };
+
+        let max_assignments = match args.value_of("MAX_ASSIGNMENTS") {
+            Some(s) => {
+                let max_assignments = s.parse::<usize>()
+                    .expect("Invalid number entered for max assignments!");
+                Some(max_assignments)
+            }
+            None => None,
+        };
+
+        let max_candidates_checked = match args.value_of("MAX_CANDIDATES") {
+            Some(s) => {
+                let max_candidates = s.parse::<usize>()
+                    .expect("Invalid number entered for max candidates!");
+                Some(max_candidates)
+            }
+            None => None,
+        };
+
+        let read_offset = match args.value_of("READ_OFFSET") {
+            Some(s) => s.parse::<usize>().expect("Invalid read offset entered!"),
+            None => unreachable!(),
+        };
+
+        let long_info_output = match args.value_of("OUTPUT_FORMAT") {
+            Some("long") => true,
+            Some("default") => false,
+            _ => false,
+        };
         
 
         if results_path.is_none() {
@@ -213,7 +261,11 @@ fn main() {
                                                          seed_gap,
                                                          min_seeds,
                                                          max_hits,
-                                                         tune_max_hits) {
+                                                         tune_max_hits,
+                                                         max_assignments,
+                                                         max_candidates_checked,
+                                                         read_offset,
+                                                         long_info_output) {
                     Ok(_) => 0,
                     Err(why) => {
                         error!("Error running query: {}", why);
@@ -233,7 +285,11 @@ fn main() {
                                                         seed_gap,
                                                         min_seeds,
                                                         max_hits,
-                                                        tune_max_hits) {
+                                                        tune_max_hits,
+                                                        max_assignments,
+                                                        max_candidates_checked,
+                                                        read_offset,
+                                                        long_info_output) {
                     Ok(_) => 0,
                     Err(why) => {
                     error!("Error running query: {}", why);
@@ -248,4 +304,3 @@ fn main() {
 
     std::process::exit(exit_code);
 }
-

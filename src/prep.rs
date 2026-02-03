@@ -243,6 +243,8 @@ mod tests {
     // use std::cmp;
     // use std::path::Path;
     use super::*;
+    use prep_config::{PrepConfig, TrimType};
+    use std::path::PathBuf;
 
     #[test]
     // fn test_prep_integration() {
@@ -558,5 +560,31 @@ mod tests {
         let (result_sequence, result_quality) = segments[5];
         assert_eq!(result_sequence, b"DDD");
         assert_eq!(result_quality, [33, 33, 33]);
+    }
+
+    #[test]
+    fn first_non_adapter_char_no_match() {
+        let seq = b"ACGTACGT";
+        let adapters = HashSet::new();
+        let idx = first_non_adapter_char(seq, &adapters, 3);
+        assert_eq!(0, idx);
+    }
+
+    #[test]
+    fn process_read_segment_trims() {
+        let config = PrepConfig {
+            trim: TrimType::Segment(4),
+            min_quality: None,
+            quality_threshold: None,
+            num_threads: 1,
+            infiles: Vec::new(),
+            outfile: PathBuf::from("/dev/null"),
+        };
+        let seq = b"ACGTACGT";
+        let qual = vec![40; seq.len()];
+        let subseqs = process_read(seq, &qual, 0, &config);
+        assert_eq!(2, subseqs.len());
+        assert_eq!(b"ACGT", subseqs[0].0.as_slice());
+        assert_eq!(b"ACGT", subseqs[1].0.as_slice());
     }
 }

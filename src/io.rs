@@ -318,4 +318,26 @@ asldkfj:3,4,5,6")
             map == from_file
         }
     }
+
+    #[test]
+    fn parsing_edit_distances() {
+        let working = String::from("r1:1=3,2=5\nr2:10=1")
+            .into_bytes();
+
+        let mut results = BTreeMap::new();
+        for res in parse_edit_distance_findings(working.as_slice()) {
+            let (read_header, hits) = res.unwrap();
+            results.insert(read_header, hits);
+        }
+
+        let r1 = results.get("r1").unwrap();
+        assert_eq!(2, r1.len());
+        assert!(r1.iter().any(|h| h.tax_id == TaxId(1) && h.edit == 3));
+        assert!(r1.iter().any(|h| h.tax_id == TaxId(2) && h.edit == 5));
+
+        let r2 = results.get("r2").unwrap();
+        assert_eq!(1, r2.len());
+        assert_eq!(TaxId(10), r2[0].tax_id);
+        assert_eq!(1, r2[0].edit);
+    }
 }

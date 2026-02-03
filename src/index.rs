@@ -262,7 +262,9 @@ impl MGIndex {
                             seed_gap: usize,
                             min_seeds_percent: f64,
                             max_hits: usize,
-                            tune_max_hits: usize)
+                            tune_max_hits: usize,
+                            max_candidates_checked: Option<usize>,
+                            max_hits_found: Option<usize>)
                             -> Vec<Hit> {
 
         // we need to later compare for edit distance where N's won't match against reference N's
@@ -377,7 +379,14 @@ impl MGIndex {
         let profile = Profile::new(sequence, &IDENT_W_PENALTY_NO_N_MATCH);
         // let mut n_skip = 0;
         // let n_refs = reference_candidates.len();
+        let mut candidates_checked = 0usize;
         for candidate in reference_candidates {
+            if let Some(limit) = max_candidates_checked {
+                if candidates_checked >= limit {
+                    break;
+                }
+            }
+            candidates_checked += 1;
             // see if we've already found this tax ID
 
             if let Some(_) = matches.iter().find(|&&t| t == candidate.bin.tax_id) {
@@ -409,6 +418,11 @@ impl MGIndex {
                     };
                     
                     hits.push(hit);
+                    if let Some(limit) = max_hits_found {
+                        if hits.len() >= limit {
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -839,5 +853,21 @@ mod test {
         let read_len = 50;
         let edits = 3;
         let _ = seed_hit.candidate_indices(&bin, read_len, edits).unwrap();
+    }
+
+    #[test]
+    fn get_references_by_taxid() {
+        let mut db = BTreeMap::new();
+        db.insert(TaxId(1), vec![(Gi(10), b"ACGT".to_vec()),
+                                 (Gi(11), b"TTAA".to_vec())]);
+        db.insert(TaxId(2), vec![(Gi(20), b"GG".to_vec())]);
+
+        let index = MGIndex::new(db, 8, 8);
+        let refs = index.get_references(1);
+
+        assert_eq!(2, refs.len());
+        assert!(refs.iter().any(|s| s.as_slice() == b"ACGT"));
+        assert!(refs.iter().any(|s| s.as_slice() == b"TTAA"));
+        assert!(index.get_references(3).is_empty());
     }
 }

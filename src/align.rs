@@ -138,6 +138,14 @@ mod test {
     }
 
     #[test]
+    fn test_single_mismatch() {
+        let needle = b"ACGT";
+        let haystack = b"ACGA";
+
+        check_test(needle, haystack, 1);
+    }
+
+    #[test]
     fn test_middle_edits() {
         let needle = b"ANNGTTCNGNT";
         let haystack = b"ACGACTAGTTATAAAAATTCNACTCCANTTAGCTCCCTACTTTCCGAGAG";
