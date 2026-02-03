@@ -378,17 +378,26 @@ fn sort_files_in_parallel(
     }
     drop(tx);
 
+    let rx = Arc::new(Mutex::new(rx));
     let results: Arc<Mutex<Vec<Option<PathBuf>>>> = Arc::new(Mutex::new(vec![None; paths.len()]));
     let errors: Arc<Mutex<Option<MtsvError>>> = Arc::new(Mutex::new(None));
 
     let mut handles = Vec::new();
     for _ in 0..threads {
-        let rx = rx.clone();
+        let rx = Arc::clone(&rx);
         let temp_dir = temp_dir.to_path_buf();
         let results = Arc::clone(&results);
         let errors = Arc::clone(&errors);
         handles.push(thread::spawn(move || {
-            while let Ok((idx, path)) = rx.recv() {
+            loop {
+                let next = {
+                    let guard = rx.lock().unwrap();
+                    guard.recv()
+                };
+                let (idx, path) = match next {
+                    Ok(item) => item,
+                    Err(_) => break,
+                };
                 match external_sort_file(&path, &temp_dir, chunk_bytes, idx) {
                     Ok(sorted) => {
                         let mut guard = results.lock().unwrap();
