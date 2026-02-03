@@ -38,6 +38,12 @@ fn main() {
             .possible_values(&["taxid", "taxid-gi"])
             .default_value("taxid")
             .help("Collapse mode: taxid (min edit per taxid) or taxid-gi (min edit per taxid-gi)."))
+        .arg(Arg::with_name("THREADS")
+            .short("t")
+            .long("threads")
+            .takes_value(true)
+            .default_value("4")
+            .help("Number of worker threads for sorting."))
         .arg(Arg::with_name("FILTER")
             .long("filter")
             .help("Enable edit-delta filtering (use with --edit-delta)."))
@@ -76,7 +82,12 @@ fn main() {
         None
     };
 
-    match collapse_edit_paths(&files, &mut outfile, mode, edit_delta) {
+    let max_threads = match args.value_of("THREADS") {
+        Some(s) => s.parse::<usize>().expect("Invalid thread count!"),
+        None => 4,
+    };
+
+    match collapse_edit_paths(&files, &mut outfile, mode, edit_delta, max_threads) {
         Ok(()) => {
             info!("Successfully collapsed files. Output available in {}",
                   outpath)
