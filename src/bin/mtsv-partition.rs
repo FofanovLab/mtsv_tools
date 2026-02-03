@@ -12,7 +12,7 @@ use mtsv::error::{MtsvError, MtsvResult};
 use mtsv::util;
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use bio::io::{fasta, fastq};
