@@ -14,8 +14,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use index::{TaxId, Gi};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Collapse mode for edit-distance results.
 pub enum CollapseMode {
+    /// Collapse hits by taxid only.
     TaxId,
+    /// Collapse hits by taxid + gi.
     TaxIdGi,
 }
 

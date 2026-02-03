@@ -33,6 +33,7 @@ pub struct Hit {
     /// The Gene-id or secondary number of the hit (Gi)
     pub gi: Gi,
 
+    /// Offset within the reference sequence.
     pub offset: usize,
     /// Edit distance of the alignment (u32)
     pub edit: u32

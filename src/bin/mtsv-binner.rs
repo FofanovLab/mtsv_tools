@@ -265,52 +265,60 @@ fn main() {
             if let Some(results_path) = results_path {
                 if results_path != resume_path {
                     error!("--resume-from must match --results when resuming.");
-                    return 4;
+                    Err(4)
+                } else {
+                    match resume_offset_from_results(resume_path, input_path, input_type) {
+                        Ok(offset) => {
+                            info!("Resuming after read offset {} from {}", offset, resume_path);
+                            Ok(offset)
+                        }
+                        Err(why) => {
+                            error!("Error computing resume offset: {}", why);
+                            Err(4)
+                        }
+                    }
                 }
-            }
-            match resume_offset_from_results(resume_path, input_path, input_type) {
-                Ok(offset) => {
-                    info!("Resuming after read offset {} from {}", offset, resume_path);
-                    offset
-                }
-                Err(why) => {
-                    error!("Error computing resume offset: {}", why);
-                    return 4;
-                }
+            } else {
+                Err(4)
             }
         } else {
-            0
+            Ok(0)
         };
 
-        let read_offset = read_offset + resume_offset;
+        match resume_offset {
+            Err(code) => code,
+            Ok(resume_offset) => {
+                let read_offset = read_offset + resume_offset;
 
-        if results_path.is_none() {
-            error!("No results path provided!");
-            3
-        } else {
-            let results_path = results_path.unwrap();
-            match binner::get_fastx_and_write_matching_bin_ids(
-                                                     input_path,
-                                                     input_type,
-                                                     index_path,
-                                                     results_path,
-                                                     append_results,
-                                                     num_threads,
-                                                     edit_tolerance,
-                                                     seed_size,
-                                                     seed_gap,
-                                                     min_seeds,
-                                                     max_hits,
-                                                     tune_max_hits,
-                                                     max_assignments,
-                                                     max_candidates_checked,
-                                                     read_offset,
-                                                     long_info_output) {
-                Ok(_) => 0,
-                Err(why) => {
-                    error!("Error running query: {}", why);
-                    2
-                },
+                if results_path.is_none() {
+                    error!("No results path provided!");
+                    3
+                } else {
+                    let results_path = results_path.unwrap();
+                    match binner::get_fastx_and_write_matching_bin_ids(
+                                                             input_path,
+                                                             input_type,
+                                                             index_path,
+                                                             results_path,
+                                                             append_results,
+                                                             num_threads,
+                                                             edit_tolerance,
+                                                             seed_size,
+                                                             seed_gap,
+                                                             min_seeds,
+                                                             max_hits,
+                                                             tune_max_hits,
+                                                             max_assignments,
+                                                             max_candidates_checked,
+                                                             read_offset,
+                                                             long_info_output) {
+                        Ok(_) => 0,
+                        Err(why) => {
+                            error!("Error running query: {}", why);
+                            2
+                        },
+                    }
+                }
             }
         }
 
