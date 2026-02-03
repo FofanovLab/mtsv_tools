@@ -69,11 +69,11 @@ fn main() {
 
     let edit_delta = if args.is_present("FILTER") {
         match args.value_of("EDIT_DELTA") {
-            Some(s) => s.parse::<u32>().expect("Invalid edit-delta value!"),
-            None => 0,
+            Some(s) => Some(s.parse::<u32>().expect("Invalid edit-delta value!")),
+            None => Some(0),
         }
     } else {
-        0
+        None
     };
 
     match collapse_edit_paths(&files, &mut outfile, mode, edit_delta) {

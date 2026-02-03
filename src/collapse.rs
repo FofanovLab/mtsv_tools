@@ -387,7 +387,7 @@ fn collapse_sorted_files<W: Write>(
     sorted_paths: &[PathBuf],
     write_to: &mut W,
     mode: CollapseMode,
-    edit_delta: u32,
+    edit_delta: Option<u32>,
 ) -> MtsvResult<()> {
     let mut readers = Vec::new();
     for path in sorted_paths {
@@ -417,11 +417,15 @@ fn collapse_sorted_files<W: Write>(
             let header = current_id.as_ref().unwrap();
             match mode {
                 CollapseMode::TaxId => {
-                    filter_taxid_hits(&mut taxid_hits, edit_delta);
+                    if let Some(delta) = edit_delta {
+                        filter_taxid_hits(&mut taxid_hits, delta);
+                    }
                     write_collapsed_taxid(header, &taxid_hits, write_to)?
                 }
                 CollapseMode::TaxIdGi => {
-                    filter_taxid_gi_hits(&mut taxid_gi_hits, edit_delta);
+                    if let Some(delta) = edit_delta {
+                        filter_taxid_gi_hits(&mut taxid_gi_hits, delta);
+                    }
                     let include_offset = offset_format.unwrap_or(false);
                     write_collapsed_taxid_gi(header, &taxid_gi_hits, write_to, include_offset)?
                 }
@@ -476,11 +480,15 @@ fn collapse_sorted_files<W: Write>(
     if let Some(header) = current_id {
         match mode {
             CollapseMode::TaxId => {
-                filter_taxid_hits(&mut taxid_hits, edit_delta);
+                if let Some(delta) = edit_delta {
+                    filter_taxid_hits(&mut taxid_hits, delta);
+                }
                 write_collapsed_taxid(&header, &taxid_hits, write_to)?
             }
             CollapseMode::TaxIdGi => {
-                filter_taxid_gi_hits(&mut taxid_gi_hits, edit_delta);
+                if let Some(delta) = edit_delta {
+                    filter_taxid_gi_hits(&mut taxid_gi_hits, delta);
+                }
                 let include_offset = offset_format.unwrap_or(false);
                 write_collapsed_taxid_gi(&header, &taxid_gi_hits, write_to, include_offset)?
             }
@@ -495,7 +503,7 @@ pub fn collapse_edit_paths<P: AsRef<Path>, W: Write>(
     paths: &[P],
     write_to: &mut W,
     mode: CollapseMode,
-    edit_delta: u32,
+    edit_delta: Option<u32>,
 ) -> MtsvResult<()> {
     let paths: Vec<PathBuf> = paths.iter().map(|p| p.as_ref().to_path_buf()).collect();
     let temp_dir = create_temp_dir()?;
@@ -513,7 +521,7 @@ pub fn collapse_edit_paths<P: AsRef<Path>, W: Write>(
 }
 
 /// Given a list of mtsv edit distance result file readers, collapse into a single one.
-pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W, mode: CollapseMode, edit_delta: u32) -> MtsvResult<()>
+pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W, mode: CollapseMode, edit_delta: Option<u32>) -> MtsvResult<()>
     where R: BufRead,
           W: Write
 {
@@ -598,7 +606,7 @@ r2:3=1";
         let mut buf = Vec::new();
         let mut infiles = vec![Cursor::new(a), Cursor::new(b)];
 
-        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, 0).unwrap();
+        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, None).unwrap();
 
         let buf_str = String::from_utf8(buf).unwrap();
         let expected = "r1:1=2,2=9\nr2:3=1\n";
@@ -613,7 +621,7 @@ r2:3=1";
         let mut buf = Vec::new();
         let mut infiles = vec![Cursor::new(a), Cursor::new(b)];
 
-        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxIdGi, 0).unwrap();
+        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxIdGi, None).unwrap();
 
         let buf_str = String::from_utf8(buf).unwrap();
         let expected = "r1:1-5-2=4,2-8-1=6\nr2:2-9-1=2\n";
@@ -628,7 +636,7 @@ r2:3=1";
         let mut buf = Vec::new();
         let mut infiles = vec![Cursor::new(a), Cursor::new(b)];
 
-        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, 1).unwrap();
+        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, Some(1)).unwrap();
 
         let buf_str = String::from_utf8(buf).unwrap();
         let expected = "r1:1=2,4=3\n";

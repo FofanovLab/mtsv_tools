@@ -601,6 +601,7 @@ impl MGIndex {
 
 // this needs to be outside the test module so that integration tests can use it
 #[cfg(test)]
+/// Generate a random database for testing purposes.
 pub fn random_database(num_taxa: u16,
                        num_gis: u16,
                        min_seq_size: usize,
