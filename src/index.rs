@@ -1,6 +1,6 @@
 //! The core metagenomic index used for queries.
 
-use align::Aligner;
+use crate::align::Aligner;
 use bio::alphabets;
 use bio::data_structures::bwt::{bwt, less, Less, Occ, BWT};
 use bio::data_structures::fmindex::{BackwardSearchResult, FMIndex, FMIndexable, Interval};
@@ -30,6 +30,11 @@ pub struct Gi(pub u32);
 pub struct Hit {
     /// The taxid of the hit (TaxId)
     pub tax_id: TaxId,
+    /// The Gene-id or secondary number of the hit (Gi)
+    pub gi: Gi,
+
+    /// Offset within the reference sequence.
+    pub offset: usize,
     /// Edit distance of the alignment (u32)
     pub edit: u32
 }
@@ -258,7 +263,9 @@ impl MGIndex {
                             seed_gap: usize,
                             min_seeds_percent: f64,
                             max_hits: usize,
-                            tune_max_hits: usize)
+                            tune_max_hits: usize,
+                            max_candidates_checked: Option<usize>,
+                            max_hits_found: Option<usize>)
                             -> Vec<Hit> {
 
         // we need to later compare for edit distance where N's won't match against reference N's
@@ -373,8 +380,16 @@ impl MGIndex {
         let profile = Profile::new(sequence, &IDENT_W_PENALTY_NO_N_MATCH);
         // let mut n_skip = 0;
         // let n_refs = reference_candidates.len();
+        let mut candidates_checked = 0usize;
         for candidate in reference_candidates {
+            if let Some(limit) = max_candidates_checked {
+                if candidates_checked >= limit {
+                    break;
+                }
+            }
+            candidates_checked += 1;
             // see if we've already found this tax ID
+
             if let Some(_) = matches.iter().find(|&&t| t == candidate.bin.tax_id) {
                 // n_skip += 1;
                 continue;
@@ -384,26 +399,31 @@ impl MGIndex {
             // if there is, record the hit tax id and then advance to the next candidate
 
             let cand_seq = candidate.candidate_seq();
-
             let score = profile.align_score(cand_seq, 1, 1);
 
             // -1 for substitution, -1 for gap open, -1 for gap extend
             // means that we need to allow for a hit to the alignment score of up to 1.5x editdist
             if score as usize >= sequence.len() - (edit_distance * 2) {
-
+                println!("candidate passed sw score threshold");
                 // the SW check is faster (w/ SIMD) than the min_edit_distance check, so if we're
                 // within an acceptable tolerance, now do the expensive check
                 let edits = aligner.min_edit_distance(&seq_no_n, cand_seq);
-                
                 if edits as usize <= edit_distance {
                     matches.push(candidate.bin.tax_id);
 
                     let hit = Hit {
                         tax_id: candidate.bin.tax_id,
+                        gi: candidate.bin.gi,
+                        offset: candidate.reference_start.saturating_sub(candidate.bin.start),
                         edit: edits
                     };
                     
                     hits.push(hit);
+                    if let Some(limit) = max_hits_found {
+                        if hits.len() >= limit {
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -433,7 +453,7 @@ impl MGIndex {
         for &mut sh in seed_hits {
 
             // if the site is ahead of the current bin, we need to advance the bin
-            while curr_bin.end <= sh.reference_offset {
+            while curr_bin.end <= sh.reference_offset { 
                 curr_bin = bin_iter.next().unwrap();
 
             }
@@ -581,6 +601,7 @@ impl MGIndex {
 
 // this needs to be outside the test module so that integration tests can use it
 #[cfg(test)]
+/// Generate a random database for testing purposes.
 pub fn random_database(num_taxa: u16,
                        num_gis: u16,
                        min_seq_size: usize,
@@ -834,5 +855,21 @@ mod test {
         let read_len = 50;
         let edits = 3;
         let _ = seed_hit.candidate_indices(&bin, read_len, edits).unwrap();
+    }
+
+    #[test]
+    fn get_references_by_taxid() {
+        let mut db = BTreeMap::new();
+        db.insert(TaxId(1), vec![(Gi(10), b"ACGT".to_vec()),
+                                 (Gi(11), b"TTAA".to_vec())]);
+        db.insert(TaxId(2), vec![(Gi(20), b"GG".to_vec())]);
+
+        let index = MGIndex::new(db, 8, 8);
+        let refs = index.get_references(1);
+
+        assert_eq!(2, refs.len());
+        assert!(refs.iter().any(|s| s.as_slice() == b"ACGT"));
+        assert!(refs.iter().any(|s| s.as_slice() == b"TTAA"));
+        assert!(index.get_references(3).is_empty());
     }
 }

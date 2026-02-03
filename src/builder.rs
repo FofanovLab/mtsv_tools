@@ -2,9 +2,9 @@
 
 use bio::io::fasta;
 
-use error::*;
-use index::MGIndex;
-use io::{parse_fasta_db, write_to_file};
+use crate::error::*;
+use crate::index::MGIndex;
+use crate::io::{parse_fasta_db, write_to_file};
 use std::io;
 
 /// Build and write the metagenomic index to disk.
@@ -32,9 +32,11 @@ pub fn build_and_write_index<R>(records: R,
 #[cfg(test)]
 mod test {
     use bio::io::fasta::Reader;
-    use mktemp::Temp;
+    use tempfile::NamedTempFile;
     use std::io::Cursor;
     use super::build_and_write_index;
+    use crate::io::from_file;
+    use crate::index::MGIndex;
 
     #[test]
     fn success() {
@@ -48,10 +50,9 @@ TTTCACCTAGTACATTAAATACACGACCTAATGTTTCGTCACCAACAGGTACACTAATTTCTTTGCCTGTATCTTTTACA
 AAAACACATATTTTCAAATCTAGTAAATATTAAATCTACTCTTGACGATTGCACCAATGCTACGCGATATAGATATCCACTAAAAACATACGTAATCATAACCATCATTGTTAGAAACAAAATTATTTCCATGATAACCCTCACTTAATATATTTCTAAAATTTTTCACTACGAATTAAGGCATAAAATAAATACAAAACTAATGCAATAACTACCAGTAATAAAACGATGAGCATTGCCATAACC";
 
         let records = Reader::new(Cursor::new(reference.as_bytes())).records();
-        let outfile = Temp::new_file().unwrap();
-        let outfile_path = outfile.to_path_buf();
+        let outfile = NamedTempFile::new().unwrap();    
+        let outfile_path = outfile.path().to_path_buf();
         let outfile_str = outfile_path.to_str().unwrap();
-
 
         build_and_write_index(records, outfile_str, 32, 64).unwrap();
 
@@ -73,10 +74,25 @@ TGTCTTAATGATAAAAATTGTTACAAACAGTTTAACATATTTAGCTACCTATTTTGCATATAAAAAACATGCTTGCATAC
 TTTCACCTAGTACATTAAATACACGACCTAATGTTTCGTCACCAACAGGTACACTAATTTCTTTGCCTGTATCTTTTACATCCATGCCTCTTTGGACACCATCAGTTGAATCCATCGCAATTGTACGAACAACGTCGTCACCTAATTGCAGCGCAACTTCTAATGTTAGTTGTATTGTACCTTCTTCTTTAGGCACATCAATAACCAAGGCGTTATTAATTTTAGGAACTTCGTTATGTTCAAATCGAACATCAATTACAGGACCCATAACTTGAGTTACACGGCCAATTCCCATGC";
 
         let records = Reader::new(Cursor::new(reference.as_bytes())).records();
-        let outfile = Temp::new_file().unwrap();
-        let outfile_path = outfile.to_path_buf();
+        let outfile = NamedTempFile::new().unwrap();
+        let outfile_path = outfile.path().to_path_buf();
         let outfile_str = outfile_path.to_str().unwrap();
 
         build_and_write_index(records, outfile_str, 32, 64).unwrap();
+    }
+
+    #[test]
+    fn build_and_read_back() {
+        let reference = ">1-9\nACGTACGT\n>2-9\nTTTTAAAA\n";
+        let records = Reader::new(Cursor::new(reference.as_bytes())).records();
+        let outfile = NamedTempFile::new().unwrap();
+        let outfile_path = outfile.path().to_path_buf();
+        let outfile_str = outfile_path.to_str().unwrap();
+
+        build_and_write_index(records, outfile_str, 8, 8).unwrap();
+
+        let index: MGIndex = from_file(outfile_str).unwrap();
+        let refs = index.get_references(9);
+        assert_eq!(2, refs.len());
     }
 }

@@ -1,7 +1,7 @@
 //! Utilities for chunking database files.
 
-use error::*;
-use index::Database;
+use crate::error::*;
+use crate::index::Database;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -67,9 +67,9 @@ pub fn write_db_chunks(records: &Database,
 #[cfg(test)]
 mod test {
     use bio::io::fasta;
-    use index::{Database, random_database};
-    use io::parse_fasta_db;
-    use mktemp::Temp;
+    use crate::index::{Database, random_database};
+    use crate::io::parse_fasta_db;
+    use tempfile::{NamedTempFile, tempdir};
     use std::fmt::Debug;
     use std::path::Path;
     use super::*;
@@ -95,13 +95,24 @@ mod test {
     fn chunk_roundtrip() {
         let db = random_database(100, 200, 500, 10_000);
 
-        let dir = Temp::new_dir().unwrap();
-        let dir = dir.to_path_buf();
+        let dir  = tempdir().unwrap();
+        let dir = dir.path().to_path_buf();
 
         let chunks = write_db_chunks(&db, "tmp_fasta", &dir, 0.001).unwrap();
 
         let expected = collect_chunks(&chunks);
 
         assert_eq!(db, expected);
+    }
+
+    #[test]
+    fn chunk_requires_directory() {
+        let db = random_database(2, 2, 10, 20);
+        let tmp = NamedTempFile::new().unwrap();
+        let err = write_db_chunks(&db, "tmp_fasta", tmp.path(), 0.001).unwrap_err();
+        match err {
+            MtsvError::MissingFile(_) => (),
+            _ => panic!("Expected MissingFile error"),
+        }
     }
 }

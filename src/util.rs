@@ -2,8 +2,8 @@
 
 use chrono::Local;
 use env_logger::LogBuilder;
-use error::*;
-use index::{Gi, TaxId};
+use crate::error::*;
+use crate::index::{Gi, TaxId};
 use log::{LogLevelFilter, LogRecord};
 
 /// Initialize the program-wide logger to write to stdout with timestamps.
@@ -56,7 +56,7 @@ pub fn parse_read_header(h: &str) -> MtsvResult<(Gi, TaxId)> {
 
 #[cfg(test)]
 mod test {
-    use index::{Gi, TaxId};
+    use crate::index::{Gi, TaxId};
 
     use log::LogLevelFilter;
     use super::{init_logging, parse_read_header};
@@ -72,6 +72,14 @@ mod test {
 
         assert_eq!(found_gi, Gi(12345));
         assert_eq!(found_tax, TaxId(908));
+    }
+
+    #[test]
+    fn success_leading_zeros() {
+        let (found_gi, found_tax) = parse_read_header("0001-0002").unwrap();
+
+        assert_eq!(found_gi, Gi(1));
+        assert_eq!(found_tax, TaxId(2));
     }
 
     #[test]

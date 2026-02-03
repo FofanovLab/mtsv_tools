@@ -7,9 +7,9 @@ extern crate mtsv;
 
 use clap::{App, Arg};
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::BufWriter;
 
-use mtsv::collapse::collapse_edit_files;
+use mtsv::collapse::{collapse_edit_paths, CollapseMode};
 use mtsv::util;
 
 fn main() {
@@ -32,6 +32,19 @@ fn main() {
         .arg(Arg::with_name("VERBOSE")
             .short("v")
             .help("Include this flag to trigger debug-level logging."))
+        .arg(Arg::with_name("MODE")
+            .long("mode")
+            .takes_value(true)
+            .possible_values(&["taxid", "taxid-gi"])
+            .default_value("taxid")
+            .help("Collapse mode: taxid (min edit per taxid) or taxid-gi (min edit per taxid-gi)."))
+        .arg(Arg::with_name("FILTER")
+            .long("filter")
+            .help("Enable edit-delta filtering (use with --edit-delta)."))
+        .arg(Arg::with_name("EDIT_DELTA")
+            .long("edit-delta")
+            .takes_value(true)
+            .help("Keep hits within (min edit + delta) per read (requires --filter)."))
         .get_matches();
 
 
@@ -45,20 +58,25 @@ fn main() {
     let outpath = args.value_of("OUTPUT").unwrap();
     let files = args.values_of("FILES").unwrap().collect::<Vec<_>>();
 
-    let mut infiles = Vec::new();
-
     // fail fast by open all the files to start
     info!("Opening output file...");
     let mut outfile = BufWriter::new(File::create(outpath).expect("Unable to create output file."));
+    let mode = match args.value_of("MODE") {
+        Some("taxid") => CollapseMode::TaxId,
+        Some("taxid-gi") => CollapseMode::TaxIdGi,
+        _ => CollapseMode::TaxId,
+    };
 
-    info!("Opening input files...");
-    for f in files {
-        let rdr = BufReader::new(File::open(f)
-            .expect(&format!("Unable to open {} for reading.", f)));
-        infiles.push(rdr);
-    }
+    let edit_delta = if args.is_present("FILTER") {
+        match args.value_of("EDIT_DELTA") {
+            Some(s) => Some(s.parse::<u32>().expect("Invalid edit-delta value!")),
+            None => Some(0),
+        }
+    } else {
+        None
+    };
 
-    match collapse_edit_files(&mut infiles, &mut outfile) {
+    match collapse_edit_paths(&files, &mut outfile, mode, edit_delta) {
         Ok(()) => {
             info!("Successfully collapsed files. Output available in {}",
                   outpath)

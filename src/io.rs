@@ -3,14 +3,14 @@
 use serde::{Serialize};
 use bincode::{deserialize_from, serialize_into};
 use bio::io::fasta;
-use error::*;
-use index::{Database, TaxId, Hit};
+use crate::error::*;
+use crate::index::{Database, TaxId, Hit, Gi};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, BufWriter};
 use std::path::Path;
-use util::parse_read_header;
+use crate::util::parse_read_header;
 
 /// Parse an arbitrary `Decodable` type from a file path.
 pub fn from_file<T>(p: &str) -> MtsvResult<T>
@@ -43,7 +43,6 @@ pub fn parse_fasta_db<R>(records: R) -> MtsvResult<Database>
         let record = (record)?;
 
         let (gi, tax_id) = parse_read_header(record.id())?;
-
         let sequences = taxon_map.entry(tax_id).or_insert_with(|| vec![]);
         sequences.push((gi, record.seq().to_vec()));
     }
@@ -145,6 +144,8 @@ pub fn parse_edit_distance_findings<'a, R: BufRead + 'a>
                 // append this hit
                 let hit = Hit {
                         tax_id: tax,
+                        gi: Gi(0),
+                        offset: 0,    
                         edit: edit
                     };
                 hits.push(hit);
@@ -171,10 +172,11 @@ pub fn parse_edit_distance_findings<'a, R: BufRead + 'a>
 #[cfg(test)]
 mod test {
 
-    use ::binner::write_single_line;
-    use ::index::TaxId;
+    use crate::binner::write_single_line;
+    use crate::index::TaxId;
 
-    use mktemp::Temp;
+    use tempfile::NamedTempFile;
+
 
     use rand::{Rng, XorShiftRng};
     use std::collections::{BTreeMap, BTreeSet};
@@ -306,8 +308,8 @@ asldkfj:3,4,5,6")
 
     quickcheck! {
         fn io_helpers(map: BTreeMap<String, String>) -> bool {
-            let outfile = Temp::new_file().unwrap();
-            let outfile = outfile.to_path_buf();
+            let outfile = NamedTempFile::new().unwrap();
+            let outfile = outfile.path().to_path_buf();
             let outfile = outfile.to_str().unwrap();
 
             write_to_file(&map, outfile).unwrap();
@@ -315,5 +317,27 @@ asldkfj:3,4,5,6")
 
             map == from_file
         }
+    }
+
+    #[test]
+    fn parsing_edit_distances() {
+        let working = String::from("r1:1=3,2=5\nr2:10=1")
+            .into_bytes();
+
+        let mut results = BTreeMap::new();
+        for res in parse_edit_distance_findings(working.as_slice()) {
+            let (read_header, hits) = res.unwrap();
+            results.insert(read_header, hits);
+        }
+
+        let r1 = results.get("r1").unwrap();
+        assert_eq!(2, r1.len());
+        assert!(r1.iter().any(|h| h.tax_id == TaxId(1) && h.edit == 3));
+        assert!(r1.iter().any(|h| h.tax_id == TaxId(2) && h.edit == 5));
+
+        let r2 = results.get("r2").unwrap();
+        assert_eq!(1, r2.len());
+        assert_eq!(TaxId(10), r2[0].tax_id);
+        assert_eq!(1, r2[0].edit);
     }
 }
