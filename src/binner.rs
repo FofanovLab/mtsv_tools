@@ -31,30 +31,12 @@ fn open_maybe_gz(path: &str) -> MtsvResult<Box<dyn Read>> {
     }
 }
 
-/// Execute metagenomic binning queries in parallel.
-///
-/// This function:
-///
-/// 1. Opens the FASTA file with query reads
-/// 2. Creates the results file to write to
-/// 3. Deserializes the metagenomic index into memory
-/// 4. In parallel queries for which taxonomic IDs have a match to the query read within the edit
-/// distance specified.
-/// 5. Writes those results to the output file as they become available.
-///
-/// `seed_size` controls how large initial exact matches should be.
-///
-/// `seed_gap` controls how far apart the seeds pulled from the query read should be.
-///
-/// `min_seeds` scales the minimum number of seeds calculated using q-gram lemma.
-///
-/// 'max_hits' is a cutoff for skipping seeds with more than max_hits hits.
-///
-///  
-/// TODO: Replace separate functions once FASTX is implemented, currently awaiting review on pull request #433
-pub fn get_fasta_and_write_matching_bin_ids(input_path: &str,
+/// Execute metagenomic binning queries in parallel for FASTA or FASTQ inputs.
+pub fn get_fastx_and_write_matching_bin_ids(input_path: &str,
+                                            input_type: &str,
                                             index_path: &str,
                                             results_path: &str,
+                                            append_results: bool,
                                             num_threads: usize,
                                             edit_distance: f64,
                                             seed_size: usize,
@@ -68,12 +50,32 @@ pub fn get_fasta_and_write_matching_bin_ids(input_path: &str,
                                             long_info_output: bool)
                                             -> MtsvResult<()> {
 
-    let mut fasta_reader = fasta::Reader::new(open_maybe_gz(input_path)?);
-    fasta_reader.records().next().unwrap()?;
+    let input_type = input_type.to_ascii_uppercase();
+    let mut fasta_reader;
+    let mut fastq_reader;
 
-    info!("Test parse of FASTA record successful, reinitializing parser.");
-    fasta_reader = fasta::Reader::new(open_maybe_gz(input_path)?);
-    let output_file = File::create(Path::new(results_path))?;
+    if input_type == "FASTA" {
+        fasta_reader = fasta::Reader::new(open_maybe_gz(input_path)?);
+        fasta_reader.records().next().unwrap()?;
+        info!("Test parse of FASTA record successful, reinitializing parser.");
+        fasta_reader = fasta::Reader::new(open_maybe_gz(input_path)?);
+    } else if input_type == "FASTQ" {
+        fastq_reader = fastq::Reader::new(open_maybe_gz(input_path)?);
+        fastq_reader.records().next().unwrap()?;
+        info!("Test parse of FASTQ record successful, reinitializing parser.");
+        fastq_reader = fastq::Reader::new(open_maybe_gz(input_path)?);
+    } else {
+        return Err(MtsvError::InvalidHeader(format!("Unknown input type: {}", input_type)));
+    }
+
+    let output_file = if append_results {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(Path::new(results_path))?
+    } else {
+        File::create(Path::new(results_path))?
+    };
     info!("Deserializing candidate filter ...");
     let filter = from_file::<MGIndex>(index_path)?;
     let fmindex = FMIndex::new(
@@ -87,8 +89,21 @@ pub fn get_fasta_and_write_matching_bin_ids(input_path: &str,
 
     let timer = Instant::now();
 
-
-    let records = fasta_reader.records().skip(read_offset);
+    let records: Box<dyn Iterator<Item = MtsvResult<FastxRecord>> + Send> = if input_type == "FASTA" {
+        Box::new(
+            fasta_reader
+                .records()
+                .skip(read_offset)
+                .map(|r| r.map(FastxRecord::Fasta).map_err(MtsvError::from)),
+        )
+    } else {
+        Box::new(
+            fastq_reader
+                .records()
+                .skip(read_offset)
+                .map(|r| r.map(FastxRecord::Fastq).map_err(MtsvError::from)),
+        )
+    };
 
     pipeline("taxonomic binning",
              num_threads,
@@ -149,8 +164,6 @@ pub fn get_fasta_and_write_matching_bin_ids(input_path: &str,
                                         max_assignments);
 
         // unify the result sets
-
-        // let results = candidates.into_iter().chain(rev_comp_candidates.into_iter()).collect::<BTreeSet<_>>();
         let edit_distances: Vec<Hit> = hits.into_iter().chain(rev_hits.into_iter()).collect();
 
         (record.id().to_owned(), edit_distances)
@@ -171,145 +184,25 @@ pub fn get_fasta_and_write_matching_bin_ids(input_path: &str,
     Ok(())
 }
 
-/// Execute metagenomic binning queries in parallel.
-///
-/// This function:
-///
-/// 1. Opens the FASTQ file with query reads
-/// 2. Creates the results file to write to
-/// 3. Deserializes the metagenomic index into memory
-/// 4. In parallel queries for which taxonomic IDs have a match to the query read within the edit
-/// distance specified.
-/// 5. Writes those results to the output file as they become available.
-///
-/// `seed_size` controls how large initial exact matches should be.
-///
-/// `seed_gap` controls how far apart the seeds pulled from the query read should be.
-///
-/// `min_seeds` scales the minimum number of seeds calculated using q-gram lemma.
-///
-/// 'max_hits' is a cutoff for skipping seeds with more than max_hits hits.
-///
-///  
-/// TODO: Replace separate functions once FASTX is implemented, currently awaiting review on pull request #433   
-pub fn get_fastq_and_write_matching_bin_ids(input_path: &str,
-                                            index_path: &str,
-                                            results_path: &str,
-                                            num_threads: usize,
-                                            edit_distance: f64,
-                                            seed_size: usize,
-                                            seed_gap: usize,
-                                            min_seeds: f64,
-                                            max_hits: usize,
-                                            tune_max_hits: usize,
-                                            max_assignments: Option<usize>,
-                                            max_candidates_checked: Option<usize>,
-                                            read_offset: usize,
-                                            long_info_output: bool)
-                                            -> MtsvResult<()> {
+enum FastxRecord {
+    Fasta(fasta::Record),
+    Fastq(fastq::Record),
+}
 
-    let mut fastq_reader = fastq::Reader::new(open_maybe_gz(input_path)?);
-    fastq_reader.records().next().unwrap()?;
-
-    info!("Test parse of FASTQ record successful, reinitializing parser.");
-    fastq_reader = fastq::Reader::new(open_maybe_gz(input_path)?);
-    let output_file = File::create(Path::new(results_path))?;
-    info!("Deserializing candidate filter ...");
-    let filter = from_file::<MGIndex>(index_path)?;
-    let fmindex = FMIndex::new(
-        filter.suffix_array.bwt(),
-        filter.suffix_array.less(),
-        filter.suffix_array.occ());
-
-    let mut result_writer = BufWriter::new(output_file);
-    
-    info!("Beginning queries.");
-
-    let timer = Instant::now();
-
-
-    let records = fastq_reader.records().skip(read_offset);
-
-    pipeline("taxonomic binning",
-             num_threads,
-             records,
-             |record| {
-
-        let record = match record {
-            Ok(r) => r,
-            Err(why) => {
-                error!("Unable to read from input file: {:?}", why);
-                exit(12);
-            },
-        };
-
-
-        // convert any lowercase items to uppercase (a <-> A isn't a SNP)
-        let seq_all_caps = record.seq()
-            .iter()
-            .map(|b| {
-                match *b {
-                    b'A' | b'a' => b'A',
-                    b'C' | b'c' => b'C',
-                    b'G' | b'g' => b'G',
-                    b'T' | b't' => b'T',
-                    b'N' | b'n' => b'N',
-                    _ => b'N',
-                }
-            })
-            .collect::<Vec<u8>>();
-        
-        
-
-        let hits = filter.matching_tax_ids(
-                                        &fmindex,
-                                        &seq_all_caps,
-                                        edit_distance,
-                                        seed_size,
-                                        seed_gap,
-                                        min_seeds,
-                                        max_hits,
-                                        tune_max_hits,
-                                        max_candidates_checked,
-                                        max_assignments);
-
-
-        // get the reverse complement
-        let rev_comp_seq = revcomp(&seq_all_caps);
-        let rev_hits = filter.matching_tax_ids(
-                                            &fmindex,
-                                            &rev_comp_seq,
-                                            edit_distance,
-                                            seed_size,
-                                            seed_gap,
-                                            min_seeds,
-                                            max_hits,
-                                            tune_max_hits,
-                                            max_candidates_checked,
-                                            max_assignments);
-
-        // unify the result sets
-
-        // let results = candidates.into_iter().chain(rev_comp_candidates.into_iter()).collect::<BTreeSet<_>>();
-        let edit_distances: Vec<Hit> = hits.into_iter().chain(rev_hits.into_iter()).collect();
-
-        (record.id().to_owned(), edit_distances)
-    },
-             |(header, edit_distances)| {
-        // again, if we can't write to the results file, just report it and bail
-
-        match write_assignments(&header, &edit_distances, &mut result_writer, long_info_output) {
-            Ok(_) => (),
-            Err(why) => {
-                error!("Error writing to result file ({})", why);
-                exit(11);
-            },
+impl FastxRecord {
+    fn id(&self) -> &str {
+        match *self {
+            FastxRecord::Fasta(ref r) => r.id(),
+            FastxRecord::Fastq(ref r) => r.id(),
         }
-    });
+    }
 
-    info!("All worker and result consumer threads terminated. Took {} seconds.",
-          timer.elapsed().as_millis() as f32 / 1000.0);
-    Ok(())
+    fn seq(&self) -> &[u8] {
+        match *self {
+            FastxRecord::Fasta(ref r) => r.seq(),
+            FastxRecord::Fastq(ref r) => r.seq(),
+        }
+    }
 }
     
 

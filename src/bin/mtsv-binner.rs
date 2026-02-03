@@ -2,10 +2,18 @@
 extern crate log;
 
 extern crate clap;
+extern crate flate2;
+extern crate bio;
 
 extern crate mtsv;
 
 use clap::{App, Arg};
+use flate2::read::GzDecoder;
+use std::collections::HashSet;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::path::Path;
+use bio::io::{fasta, fastq};
 
 use mtsv::binner;
 use mtsv::util;
@@ -44,6 +52,13 @@ fn main() {
             .long("results")
             .takes_value(true)
             .help("Path to write results file."))
+        .arg(Arg::with_name("APPEND_RESULTS")
+            .long("append-results")
+            .help("Append to the results file instead of truncating it."))
+        .arg(Arg::with_name("RESUME_FROM")
+            .long("resume-from")
+            .takes_value(true)
+            .help("Existing results file to resume from; read offset is computed from it."))
         .arg(Arg::with_name("NUM_THREADS")
             .short("t")
             .long("threads")
@@ -243,64 +258,123 @@ fn main() {
             Some("default") => false,
             _ => false,
         };
-        
+
+        let resume_from = args.value_of("RESUME_FROM");
+        let append_results = args.is_present("APPEND_RESULTS") || resume_from.is_some();
+        let resume_offset = if let Some(resume_path) = resume_from {
+            if let Some(results_path) = results_path {
+                if results_path != resume_path {
+                    error!("--resume-from must match --results when resuming.");
+                    return 4;
+                }
+            }
+            match resume_offset_from_results(resume_path, input_path, input_type) {
+                Ok(offset) => {
+                    info!("Resuming after read offset {} from {}", offset, resume_path);
+                    offset
+                }
+                Err(why) => {
+                    error!("Error computing resume offset: {}", why);
+                    return 4;
+                }
+            }
+        } else {
+            0
+        };
+
+        let read_offset = read_offset + resume_offset;
 
         if results_path.is_none() {
             error!("No results path provided!");
             3
         } else {
             let results_path = results_path.unwrap();
-            if input_type == "FASTA" {
-                match binner::get_fasta_and_write_matching_bin_ids(
-                                                         input_path,
-                                                         index_path,
-                                                         results_path,
-                                                         num_threads,
-                                                         edit_tolerance,
-                                                         seed_size,
-                                                         seed_gap,
-                                                         min_seeds,
-                                                         max_hits,
-                                                         tune_max_hits,
-                                                         max_assignments,
-                                                         max_candidates_checked,
-                                                         read_offset,
-                                                         long_info_output) {
-                    Ok(_) => 0,
-                    Err(why) => {
-                        error!("Error running query: {}", why);
-                        2
-                        
-                    },
-                }
-            } else {
-
-                match binner::get_fastq_and_write_matching_bin_ids(
-                                                        input_path,
-                                                        index_path,
-                                                        results_path,
-                                                        num_threads,
-                                                        edit_tolerance,
-                                                        seed_size,
-                                                        seed_gap,
-                                                        min_seeds,
-                                                        max_hits,
-                                                        tune_max_hits,
-                                                        max_assignments,
-                                                        max_candidates_checked,
-                                                        read_offset,
-                                                        long_info_output) {
-                    Ok(_) => 0,
-                    Err(why) => {
+            match binner::get_fastx_and_write_matching_bin_ids(
+                                                     input_path,
+                                                     input_type,
+                                                     index_path,
+                                                     results_path,
+                                                     append_results,
+                                                     num_threads,
+                                                     edit_tolerance,
+                                                     seed_size,
+                                                     seed_gap,
+                                                     min_seeds,
+                                                     max_hits,
+                                                     tune_max_hits,
+                                                     max_assignments,
+                                                     max_candidates_checked,
+                                                     read_offset,
+                                                     long_info_output) {
+                Ok(_) => 0,
+                Err(why) => {
                     error!("Error running query: {}", why);
                     2
-
-                    },
-                }
+                },
             }
         }
 
     };
 
     std::process::exit(exit_code);
+}
+
+fn open_maybe_gz(path: &str) -> Result<Box<dyn Read>, std::io::Error> {
+    let mut file = File::open(Path::new(path))?;
+    let mut magic = [0u8; 2];
+    let read_len = file.read(&mut magic)?;
+    file.seek(SeekFrom::Start(0))?;
+
+    if read_len == 2 && magic == [0x1f, 0x8b] {
+        Ok(Box::new(GzDecoder::new(file)))
+    } else {
+        Ok(Box::new(file))
+    }
+}
+
+fn read_ids_from_results(path: &str) -> Result<HashSet<String>, String> {
+    let reader = BufReader::new(File::open(path).map_err(|e| e.to_string())?);
+    let mut ids = HashSet::new();
+    for line in reader.lines() {
+        let line = line.map_err(|e| e.to_string())?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let mut halves = line.rsplitn(2, ':');
+        let _hits = halves.next().unwrap_or("");
+        let read_id = halves.next().ok_or_else(|| "Missing read id".to_string())?;
+        if read_id.is_empty() {
+            return Err("Missing read id".to_string());
+        }
+        ids.insert(read_id.to_string());
+    }
+    Ok(ids)
+}
+
+fn resume_offset_from_results(results_path: &str, input_path: &str, input_type: &str) -> Result<usize, String> {
+    let ids = read_ids_from_results(results_path)?;
+    let input_type = input_type.to_ascii_uppercase();
+    let mut last_idx: Option<usize> = None;
+
+    if input_type == "FASTA" {
+        let reader = fasta::Reader::new(open_maybe_gz(input_path).map_err(|e| e.to_string())?);
+        for (idx, record) in reader.records().enumerate() {
+            let record = record.map_err(|e| e.to_string())?;
+            if ids.contains(record.id()) {
+                last_idx = Some(idx);
+            }
+        }
+    } else if input_type == "FASTQ" {
+        let reader = fastq::Reader::new(open_maybe_gz(input_path).map_err(|e| e.to_string())?);
+        for (idx, record) in reader.records().enumerate() {
+            let record = record.map_err(|e| e.to_string())?;
+            if ids.contains(record.id()) {
+                last_idx = Some(idx);
+            }
+        }
+    } else {
+        return Err(format!("Unknown input type: {}", input_type));
+    }
+
+    Ok(last_idx.map(|i| i + 1).unwrap_or(0))
 }
