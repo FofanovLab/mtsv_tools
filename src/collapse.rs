@@ -221,6 +221,24 @@ fn write_collapsed_taxid_gi<W: Write>(
     Ok(())
 }
 
+fn filter_taxid_hits(hits: &mut HashMap<TaxId, u32>, edit_delta: u32) {
+    if hits.is_empty() {
+        return;
+    }
+    let min_edit = hits.values().cloned().min().unwrap_or(0);
+    let cutoff = min_edit.saturating_add(edit_delta);
+    hits.retain(|_, edit| *edit <= cutoff);
+}
+
+fn filter_taxid_gi_hits(hits: &mut HashMap<(TaxId, Gi), (u32, usize)>, edit_delta: u32) {
+    if hits.is_empty() {
+        return;
+    }
+    let min_edit = hits.values().map(|v| v.0).min().unwrap_or(0);
+    let cutoff = min_edit.saturating_add(edit_delta);
+    hits.retain(|_, (edit, _)| *edit <= cutoff);
+}
+
 fn create_temp_dir() -> MtsvResult<PathBuf> {
     let mut base = std::env::temp_dir();
     let ts = SystemTime::now()
@@ -366,6 +384,7 @@ fn collapse_sorted_files<W: Write>(
     sorted_paths: &[PathBuf],
     write_to: &mut W,
     mode: CollapseMode,
+    edit_delta: u32,
 ) -> MtsvResult<()> {
     let mut readers = Vec::new();
     for path in sorted_paths {
@@ -394,8 +413,12 @@ fn collapse_sorted_files<W: Write>(
         if current_id.as_ref().map(|r| r != &read_id).unwrap_or(false) {
             let header = current_id.as_ref().unwrap();
             match mode {
-                CollapseMode::TaxId => write_collapsed_taxid(header, &taxid_hits, write_to)?,
+                CollapseMode::TaxId => {
+                    filter_taxid_hits(&mut taxid_hits, edit_delta);
+                    write_collapsed_taxid(header, &taxid_hits, write_to)?
+                }
                 CollapseMode::TaxIdGi => {
+                    filter_taxid_gi_hits(&mut taxid_gi_hits, edit_delta);
                     let include_offset = offset_format.unwrap_or(false);
                     write_collapsed_taxid_gi(header, &taxid_gi_hits, write_to, include_offset)?
                 }
@@ -449,8 +472,12 @@ fn collapse_sorted_files<W: Write>(
 
     if let Some(header) = current_id {
         match mode {
-            CollapseMode::TaxId => write_collapsed_taxid(&header, &taxid_hits, write_to)?,
+            CollapseMode::TaxId => {
+                filter_taxid_hits(&mut taxid_hits, edit_delta);
+                write_collapsed_taxid(&header, &taxid_hits, write_to)?
+            }
             CollapseMode::TaxIdGi => {
+                filter_taxid_gi_hits(&mut taxid_gi_hits, edit_delta);
                 let include_offset = offset_format.unwrap_or(false);
                 write_collapsed_taxid_gi(&header, &taxid_gi_hits, write_to, include_offset)?
             }
@@ -465,13 +492,14 @@ pub fn collapse_edit_paths<P: AsRef<Path>, W: Write>(
     paths: &[P],
     write_to: &mut W,
     mode: CollapseMode,
+    edit_delta: u32,
 ) -> MtsvResult<()> {
     let paths: Vec<PathBuf> = paths.iter().map(|p| p.as_ref().to_path_buf()).collect();
     let temp_dir = create_temp_dir()?;
     let chunk_bytes = 128 * 1024 * 1024;
 
     let sorted_paths = sort_files_in_parallel(&paths, &temp_dir, chunk_bytes)?;
-    let result = collapse_sorted_files(&sorted_paths, write_to, mode);
+    let result = collapse_sorted_files(&sorted_paths, write_to, mode, edit_delta);
 
     for path in sorted_paths {
         let _ = fs::remove_file(path);
@@ -482,7 +510,7 @@ pub fn collapse_edit_paths<P: AsRef<Path>, W: Write>(
 }
 
 /// Given a list of mtsv edit distance result file readers, collapse into a single one.
-pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W, mode: CollapseMode) -> MtsvResult<()>
+pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W, mode: CollapseMode, edit_delta: u32) -> MtsvResult<()>
     where R: BufRead,
           W: Write
 {
@@ -503,7 +531,7 @@ pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W, mode: Collap
         temp_paths.push(path);
     }
 
-    let result = collapse_edit_paths(&temp_paths, write_to, mode);
+    let result = collapse_edit_paths(&temp_paths, write_to, mode, edit_delta);
 
     for path in temp_paths {
         let _ = fs::remove_file(path);
@@ -567,7 +595,7 @@ r2:3=1";
         let mut buf = Vec::new();
         let mut infiles = vec![Cursor::new(a), Cursor::new(b)];
 
-        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId).unwrap();
+        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, 0).unwrap();
 
         let buf_str = String::from_utf8(buf).unwrap();
         let expected = "r1:1=2,2=9\nr2:3=1\n";
@@ -582,10 +610,25 @@ r2:3=1";
         let mut buf = Vec::new();
         let mut infiles = vec![Cursor::new(a), Cursor::new(b)];
 
-        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxIdGi).unwrap();
+        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxIdGi, 0).unwrap();
 
         let buf_str = String::from_utf8(buf).unwrap();
         let expected = "r1:1-5-2=4,2-8-1=6\nr2:2-9-1=2\n";
+        assert_eq!(expected, &buf_str);
+    }
+
+    #[test]
+    fn collapse_edit_distances_delta_filters() {
+        let a = "r1:1=2,2=5,3=8\n";
+        let b = "r1:4=3,5=10\n";
+
+        let mut buf = Vec::new();
+        let mut infiles = vec![Cursor::new(a), Cursor::new(b)];
+
+        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, 1).unwrap();
+
+        let buf_str = String::from_utf8(buf).unwrap();
+        let expected = "r1:1=2,4=3\n";
         assert_eq!(expected, &buf_str);
     }
 }

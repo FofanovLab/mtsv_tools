@@ -38,6 +38,13 @@ fn main() {
             .possible_values(&["taxid", "taxid-gi"])
             .default_value("taxid")
             .help("Collapse mode: taxid (min edit per taxid) or taxid-gi (min edit per taxid-gi)."))
+        .arg(Arg::with_name("FILTER")
+            .long("filter")
+            .help("Enable edit-delta filtering (use with --edit-delta)."))
+        .arg(Arg::with_name("EDIT_DELTA")
+            .long("edit-delta")
+            .takes_value(true)
+            .help("Keep hits within (min edit + delta) per read (requires --filter)."))
         .get_matches();
 
 
@@ -60,7 +67,16 @@ fn main() {
         _ => CollapseMode::TaxId,
     };
 
-    match collapse_edit_paths(&files, &mut outfile, mode) {
+    let edit_delta = if args.is_present("FILTER") {
+        match args.value_of("EDIT_DELTA") {
+            Some(s) => s.parse::<u32>().expect("Invalid edit-delta value!"),
+            None => 0,
+        }
+    } else {
+        0
+    };
+
+    match collapse_edit_paths(&files, &mut outfile, mode, edit_delta) {
         Ok(()) => {
             info!("Successfully collapsed files. Output available in {}",
                   outpath)
