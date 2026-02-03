@@ -2,8 +2,6 @@
 //!
 //! Currently:
 //!
-//! * `vedro-readprep`: a quality-control and deduplication tool which converts multiple FASTQ
-//! files to a single FASTA file
 //! * `vedro-binner`: a metagenomic binning tool that is sensitive to SNPs and other edits
 //! * `vedro-build`: an index-construction tool to provide fast-lookup data structures for the
 //! binner
@@ -50,6 +48,4 @@ pub mod collapse;
 pub mod error;
 pub mod index;
 pub mod io;
-pub mod prep;
-pub mod prep_config;
 pub mod util;

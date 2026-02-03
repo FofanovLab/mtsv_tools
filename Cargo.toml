@@ -28,6 +28,10 @@ ssw = { path = "ssw" }
 tar = "0.4"
 chrono = { version = "0.4", features = ["clock"] }
 
+[patch.crates-io]
+nalgebra = "0.33"
+
+
 [dependencies.clap]
 version = "2.9"
 default-features = false
