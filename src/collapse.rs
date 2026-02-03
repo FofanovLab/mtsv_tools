@@ -9,6 +9,7 @@ use std::fs::{self, File};
 use std::fmt::Write as FmtWrite;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use crate::index::{TaxId, Gi};
@@ -368,30 +369,63 @@ fn sort_files_in_parallel(
     paths: &[PathBuf],
     temp_dir: &Path,
     chunk_bytes: usize,
+    max_threads: usize,
 ) -> MtsvResult<Vec<PathBuf>> {
-    let mut handles = Vec::new();
+    let threads = std::cmp::min(max_threads.max(1), paths.len().max(1));
+    let (tx, rx) = mpsc::channel::<(usize, PathBuf)>();
     for (idx, path) in paths.iter().enumerate() {
-        let path = path.clone();
+        tx.send((idx, path.clone())).unwrap();
+    }
+    drop(tx);
+
+    let rx = Arc::new(Mutex::new(rx));
+    let results: Arc<Mutex<Vec<Option<PathBuf>>>> = Arc::new(Mutex::new(vec![None; paths.len()]));
+    let errors: Arc<Mutex<Option<MtsvError>>> = Arc::new(Mutex::new(None));
+
+    let mut handles = Vec::new();
+    for _ in 0..threads {
+        let rx = Arc::clone(&rx);
         let temp_dir = temp_dir.to_path_buf();
+        let results = Arc::clone(&results);
+        let errors = Arc::clone(&errors);
         handles.push(thread::spawn(move || {
-            (idx, external_sort_file(&path, &temp_dir, chunk_bytes, idx))
+            loop {
+                let next = {
+                    let guard = rx.lock().unwrap();
+                    guard.recv()
+                };
+                let (idx, path) = match next {
+                    Ok(item) => item,
+                    Err(_) => break,
+                };
+                match external_sort_file(&path, &temp_dir, chunk_bytes, idx) {
+                    Ok(sorted) => {
+                        let mut guard = results.lock().unwrap();
+                        guard[idx] = Some(sorted);
+                    }
+                    Err(err) => {
+                        let mut guard = errors.lock().unwrap();
+                        if guard.is_none() {
+                            *guard = Some(err);
+                        }
+                    }
+                }
+            }
         }));
     }
 
-    let mut sorted_paths = vec![None; paths.len()];
     for handle in handles {
-        match handle.join() {
-            Ok((idx, Ok(path))) => sorted_paths[idx] = Some(path),
-            Ok((_idx, Err(err))) => return Err(err),
-            Err(_) => {
-                return Err(MtsvError::AnyhowError("Sort worker panicked".to_string()));
-            }
-        }
+        let _ = handle.join();
     }
 
-    let mut collected = Vec::with_capacity(sorted_paths.len());
-    for path in sorted_paths {
-        collected.push(path.ok_or_else(|| {
+    if let Some(err) = errors.lock().unwrap().take() {
+        return Err(err);
+    }
+
+    let guard = results.lock().unwrap();
+    let mut collected = Vec::with_capacity(guard.len());
+    for path in guard.iter() {
+        collected.push(path.clone().ok_or_else(|| {
             MtsvError::AnyhowError("Missing sorted file path".to_string())
         })?);
     }
@@ -519,12 +553,13 @@ pub fn collapse_edit_paths<P: AsRef<Path>, W: Write>(
     write_to: &mut W,
     mode: CollapseMode,
     edit_delta: Option<u32>,
+    max_threads: usize,
 ) -> MtsvResult<()> {
     let paths: Vec<PathBuf> = paths.iter().map(|p| p.as_ref().to_path_buf()).collect();
     let temp_dir = create_temp_dir()?;
     let chunk_bytes = 128 * 1024 * 1024;
 
-    let sorted_paths = sort_files_in_parallel(&paths, &temp_dir, chunk_bytes)?;
+    let sorted_paths = sort_files_in_parallel(&paths, &temp_dir, chunk_bytes, max_threads)?;
     let result = collapse_sorted_files(&sorted_paths, write_to, mode, edit_delta);
 
     for path in sorted_paths {
@@ -536,7 +571,7 @@ pub fn collapse_edit_paths<P: AsRef<Path>, W: Write>(
 }
 
 /// Given a list of mtsv edit distance result file readers, collapse into a single one.
-pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W, mode: CollapseMode, edit_delta: Option<u32>) -> MtsvResult<()>
+pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W, mode: CollapseMode, edit_delta: Option<u32>, max_threads: usize) -> MtsvResult<()>
     where R: BufRead,
           W: Write
 {
@@ -557,7 +592,7 @@ pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W, mode: Collap
         temp_paths.push(path);
     }
 
-    let result = collapse_edit_paths(&temp_paths, write_to, mode, edit_delta);
+    let result = collapse_edit_paths(&temp_paths, write_to, mode, edit_delta, max_threads);
 
     for path in temp_paths {
         let _ = fs::remove_file(path);
@@ -621,7 +656,7 @@ r2:3=1";
         let mut buf = Vec::new();
         let mut infiles = vec![Cursor::new(a), Cursor::new(b)];
 
-        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, None).unwrap();
+        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, None, 1).unwrap();
 
         let buf_str = String::from_utf8(buf).unwrap();
         let expected = "r1:1=2,2=9\nr2:3=1\n";
@@ -636,7 +671,7 @@ r2:3=1";
         let mut buf = Vec::new();
         let mut infiles = vec![Cursor::new(a), Cursor::new(b)];
 
-        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxIdGi, None).unwrap();
+        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxIdGi, None, 1).unwrap();
 
         let buf_str = String::from_utf8(buf).unwrap();
         let expected = "r1:1-5-2=4,2-8-1=6\nr2:2-9-1=2\n";
@@ -651,7 +686,7 @@ r2:3=1";
         let mut buf = Vec::new();
         let mut infiles = vec![Cursor::new(a), Cursor::new(b)];
 
-        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, Some(1)).unwrap();
+        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, Some(1), 1).unwrap();
 
         let buf_str = String::from_utf8(buf).unwrap();
         let expected = "r1:1=2,4=3\n";
