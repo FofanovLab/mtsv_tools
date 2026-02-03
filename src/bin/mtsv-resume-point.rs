@@ -22,7 +22,8 @@ fn open_maybe_gz(path: &str) -> Result<Box<dyn Read>, std::io::Error> {
     file.seek(SeekFrom::Start(0))?;
 
     if read_len == 2 && magic == [0x1f, 0x8b] {
-        Ok(Box::new(GzDecoder::new(file)))
+        let decoder = GzDecoder::new(file)?;
+        Ok(Box::new(decoder))
     } else {
         Ok(Box::new(file))
     }

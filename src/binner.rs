@@ -25,10 +25,124 @@ fn open_maybe_gz(path: &str) -> MtsvResult<Box<dyn Read + Send>> {
     file.seek(SeekFrom::Start(0))?;
 
     if read_len == 2 && magic == [0x1f, 0x8b] {
-        Ok(Box::new(GzDecoder::new(file)))
+        let decoder = GzDecoder::new(file).map_err(MtsvError::from)?;
+        Ok(Box::new(decoder))
     } else {
         Ok(Box::new(file))
     }
+}
+
+fn run_fastx_pipeline<I>(
+    records: I,
+    index_path: &str,
+    results_path: &str,
+    append_results: bool,
+    num_threads: usize,
+    edit_distance: f64,
+    seed_size: usize,
+    seed_gap: usize,
+    min_seeds: f64,
+    max_hits: usize,
+    tune_max_hits: usize,
+    max_assignments: Option<usize>,
+    max_candidates_checked: Option<usize>,
+    long_info_output: bool,
+) -> MtsvResult<()>
+where
+    I: Iterator<Item = MtsvResult<FastxRecord>>,
+{
+    let output_file = if append_results {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(Path::new(results_path))?
+    } else {
+        File::create(Path::new(results_path))?
+    };
+    info!("Deserializing candidate filter ...");
+    let filter = from_file::<MGIndex>(index_path)?;
+    let fmindex = FMIndex::new(
+        filter.suffix_array.bwt(),
+        filter.suffix_array.less(),
+        filter.suffix_array.occ());
+
+    let mut result_writer = BufWriter::new(output_file);
+
+    info!("Beginning queries.");
+    let timer = Instant::now();
+
+    pipeline("taxonomic binning",
+             num_threads,
+             records,
+             |record| {
+
+        let record = match record {
+            Ok(r) => r,
+            Err(why) => {
+                error!("Unable to read from input file: {:?}", why);
+                exit(12);
+            },
+        };
+
+        // convert any lowercase items to uppercase (a <-> A isn't a SNP)
+        let seq_all_caps = record.seq()
+            .iter()
+            .map(|b| {
+                match *b {
+                    b'A' | b'a' => b'A',
+                    b'C' | b'c' => b'C',
+                    b'G' | b'g' => b'G',
+                    b'T' | b't' => b'T',
+                    b'N' | b'n' => b'N',
+                    _ => b'N',
+                }
+            })
+            .collect::<Vec<u8>>();
+
+        let hits = filter.matching_tax_ids(
+                                        &fmindex,
+                                        &seq_all_caps,
+                                        edit_distance,
+                                        seed_size,
+                                        seed_gap,
+                                        min_seeds,
+                                        max_hits,
+                                        tune_max_hits,
+                                        max_candidates_checked,
+                                        max_assignments);
+
+        // get the reverse complement
+        let rev_comp_seq = revcomp(&seq_all_caps);
+        let rev_hits = filter.matching_tax_ids(
+                                        &fmindex,
+                                        &rev_comp_seq,
+                                        edit_distance,
+                                        seed_size,
+                                        seed_gap,
+                                        min_seeds,
+                                        max_hits,
+                                        tune_max_hits,
+                                        max_candidates_checked,
+                                        max_assignments);
+
+        let edit_distances: Vec<Hit> = hits.into_iter().chain(rev_hits.into_iter()).collect();
+
+        (record.id().to_owned(), edit_distances)
+    },
+             |(header, edit_distances)| {
+
+        match write_assignments(&header, &edit_distances, &mut result_writer, long_info_output) {
+            Ok(_) => (),
+            Err(why) => {
+                error!("Error writing to result file ({})", why);
+                exit(11);
+            },
+        }
+    });
+
+    info!("All worker and result consumer threads terminated. Took {} seconds.",
+          timer.elapsed().as_millis() as f32 / 1000.0);
+    Ok(())
 }
 
 /// Execute metagenomic binning queries in parallel for FASTA or FASTQ inputs.
@@ -51,137 +165,55 @@ pub fn get_fastx_and_write_matching_bin_ids(input_path: &str,
                                             -> MtsvResult<()> {
 
     let input_type = input_type.to_ascii_uppercase();
-    let mut fasta_reader;
-    let mut fastq_reader;
-
     if input_type == "FASTA" {
-        fasta_reader = fasta::Reader::new(open_maybe_gz(input_path)?);
-        fasta_reader.records().next().unwrap()?;
+        let mut reader = fasta::Reader::new(open_maybe_gz(input_path)?);
+        reader.records().next().unwrap()?;
         info!("Test parse of FASTA record successful, reinitializing parser.");
-        fasta_reader = fasta::Reader::new(open_maybe_gz(input_path)?);
+        reader = fasta::Reader::new(open_maybe_gz(input_path)?);
+        let records = reader
+            .records()
+            .skip(read_offset)
+            .map(|r| r.map(FastxRecord::Fasta).map_err(MtsvError::from));
+        run_fastx_pipeline(records,
+                           index_path,
+                           results_path,
+                           append_results,
+                           num_threads,
+                           edit_distance,
+                           seed_size,
+                           seed_gap,
+                           min_seeds,
+                           max_hits,
+                           tune_max_hits,
+                           max_assignments,
+                           max_candidates_checked,
+                           long_info_output)
     } else if input_type == "FASTQ" {
-        fastq_reader = fastq::Reader::new(open_maybe_gz(input_path)?);
-        fastq_reader.records().next().unwrap()?;
+        let mut reader = fastq::Reader::new(open_maybe_gz(input_path)?);
+        reader.records().next().unwrap()?;
         info!("Test parse of FASTQ record successful, reinitializing parser.");
-        fastq_reader = fastq::Reader::new(open_maybe_gz(input_path)?);
+        reader = fastq::Reader::new(open_maybe_gz(input_path)?);
+        let records = reader
+            .records()
+            .skip(read_offset)
+            .map(|r| r.map(FastxRecord::Fastq).map_err(MtsvError::from));
+        run_fastx_pipeline(records,
+                           index_path,
+                           results_path,
+                           append_results,
+                           num_threads,
+                           edit_distance,
+                           seed_size,
+                           seed_gap,
+                           min_seeds,
+                           max_hits,
+                           tune_max_hits,
+                           max_assignments,
+                           max_candidates_checked,
+                           long_info_output)
     } else {
-        return Err(MtsvError::InvalidHeader(format!("Unknown input type: {}", input_type)));
+        Err(MtsvError::InvalidHeader(format!("Unknown input type: {}", input_type)))
     }
-
-    let output_file = if append_results {
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(Path::new(results_path))?
-    } else {
-        File::create(Path::new(results_path))?
-    };
-    info!("Deserializing candidate filter ...");
-    let filter = from_file::<MGIndex>(index_path)?;
-    let fmindex = FMIndex::new(
-        filter.suffix_array.bwt(),
-        filter.suffix_array.less(),
-        filter.suffix_array.occ());
-
-    let mut result_writer = BufWriter::new(output_file);
-    
-    info!("Beginning queries.");
-
-    let timer = Instant::now();
-
-    let records: Box<dyn Iterator<Item = MtsvResult<FastxRecord>>> = if input_type == "FASTA" {
-        Box::new(
-            fasta_reader
-                .records()
-                .skip(read_offset)
-                .map(|r| r.map(FastxRecord::Fasta).map_err(MtsvError::from)),
-        )
-    } else {
-        Box::new(
-            fastq_reader
-                .records()
-                .skip(read_offset)
-                .map(|r| r.map(FastxRecord::Fastq).map_err(MtsvError::from)),
-        )
-    };
-
-    pipeline("taxonomic binning",
-             num_threads,
-             records,
-             |record| {
-
-        let record = match record {
-            Ok(r) => r,
-            Err(why) => {
-                error!("Unable to read from input file: {:?}", why);
-                exit(12);
-            },
-        };
-
-
-        // convert any lowercase items to uppercase (a <-> A isn't a SNP)
-        let seq_all_caps = record.seq()
-            .iter()
-            .map(|b| {
-                match *b {
-                    b'A' | b'a' => b'A',
-                    b'C' | b'c' => b'C',
-                    b'G' | b'g' => b'G',
-                    b'T' | b't' => b'T',
-                    b'N' | b'n' => b'N',
-                    _ => b'N',
-                }
-            })
-            .collect::<Vec<u8>>();
-        
-        
-
-        let hits = filter.matching_tax_ids(
-                                        &fmindex,
-                                        &seq_all_caps,
-                                        edit_distance,
-                                        seed_size,
-                                        seed_gap,
-                                        min_seeds,
-                                        max_hits,
-                                        tune_max_hits,
-                                        max_candidates_checked,
-                                        max_assignments);
-
-
-        // get the reverse complement
-        let rev_comp_seq = revcomp(&seq_all_caps);
-        let rev_hits = filter.matching_tax_ids(
-                                        &fmindex,
-                                        &rev_comp_seq,
-                                        edit_distance,
-                                        seed_size,
-                                        seed_gap,
-                                        min_seeds,
-                                        max_hits,
-                                        tune_max_hits,
-                                        max_candidates_checked,
-                                        max_assignments);
-
-        // unify the result sets
-        let edit_distances: Vec<Hit> = hits.into_iter().chain(rev_hits.into_iter()).collect();
-
-        (record.id().to_owned(), edit_distances)
-    },
-             |(header, edit_distances)| {
-
-        match write_assignments(&header, &edit_distances, &mut result_writer, long_info_output) {
-            Ok(_) => (),
-            Err(why) => {
-                error!("Error writing to result file ({})", why);
-                exit(11);
-            },
-        }
-    });
-
-    info!("All worker and result consumer threads terminated. Took {} seconds.",
-          timer.elapsed().as_millis() as f32 / 1000.0);
-    Ok(())
 }
 
 enum FastxRecord {
