@@ -243,14 +243,29 @@ fn filter_taxid_gi_hits(hits: &mut HashMap<(TaxId, Gi), (u32, usize)>, edit_delt
 }
 
 fn create_temp_dir() -> MtsvResult<PathBuf> {
-    let mut base = std::env::temp_dir();
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis();
-    base.push(format!("mtsv-collapse-{}-{}", std::process::id(), ts));
-    fs::create_dir(&base)?;
-    Ok(base)
+        .as_nanos();
+
+    for _ in 0..10 {
+        let mut base = std::env::temp_dir();
+        let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+        base.push(format!("mtsv-collapse-{}-{}-{}", std::process::id(), ts, count));
+        match fs::create_dir(&base) {
+            Ok(()) => return Ok(base),
+            Err(err) => {
+                if err.kind() != std::io::ErrorKind::AlreadyExists {
+                    return Err(err.into());
+                }
+            }
+        }
+    }
+
+    Err(MtsvError::AnyhowError("Unable to create temp dir".to_string()))
 }
 
 fn write_sorted_chunk(
