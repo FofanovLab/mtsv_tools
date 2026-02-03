@@ -516,7 +516,7 @@ pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W, mode: Collap
 {
     let temp_dir = create_temp_dir()?;
     let mut temp_paths = Vec::new();
-    for (idx, mut reader) in files.iter_mut().enumerate() {
+    for (idx, reader) in files.iter_mut().enumerate() {
         let path = temp_dir.join(format!("input-{}.txt", idx));
         let mut writer = BufWriter::new(File::create(&path)?);
         let mut line = String::new();

@@ -29,6 +29,7 @@ extern crate clap;
 extern crate cue;
 extern crate env_logger;
 extern crate itertools;
+extern crate flate2;
 
 extern crate ssw;
 extern crate serde;

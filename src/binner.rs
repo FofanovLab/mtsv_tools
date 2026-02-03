@@ -18,7 +18,7 @@ use std::process::exit;
 use std::time::Instant;
 use std::fmt::Write as FmtWrite; // for write!(String, ...)
 
-fn open_maybe_gz(path: &str) -> MtsvResult<Box<dyn Read>> {
+fn open_maybe_gz(path: &str) -> MtsvResult<Box<dyn Read + Send>> {
     let mut file = File::open(Path::new(path))?;
     let mut magic = [0u8; 2];
     let read_len = file.read(&mut magic)?;
@@ -89,7 +89,7 @@ pub fn get_fastx_and_write_matching_bin_ids(input_path: &str,
 
     let timer = Instant::now();
 
-    let records: Box<dyn Iterator<Item = MtsvResult<FastxRecord>> + Send> = if input_type == "FASTA" {
+    let records: Box<dyn Iterator<Item = MtsvResult<FastxRecord>>> = if input_type == "FASTA" {
         Box::new(
             fasta_reader
                 .records()
