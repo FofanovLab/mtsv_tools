@@ -175,7 +175,7 @@ mod test {
     use crate::binner::write_single_line;
     use crate::index::TaxId;
 
-    use tempfile::{NamedTempFile, tempdir};
+    use tempfile::NamedTempFile;
 
 
     use rand::{Rng, XorShiftRng};
@@ -309,7 +309,7 @@ asldkfj:3,4,5,6")
     quickcheck! {
         fn io_helpers(map: BTreeMap<String, String>) -> bool {
             let outfile = NamedTempFile::new().unwrap();
-            let outfile = outfile.to_path_buf();
+            let outfile = outfile.path().to_path_buf();
             let outfile = outfile.to_str().unwrap();
 
             write_to_file(&map, outfile).unwrap();

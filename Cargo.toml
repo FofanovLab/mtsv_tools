@@ -8,15 +8,13 @@ edition = "2021"
 
 [package.metadata.bundle]
 name = "MTSv"
-identifier = "mac.os.mstv"
-icon = ["icons/favicon-32x32.png", "icons/favicon-96x96.png"]
-version = "0.4.0"
-description = "Metagenomic binning and analysis" 
+identifier = "mtsv"
+icon = ["icons/icon.svg", "icons/icon.svg"]
 
 [dependencies]
 anyhow = "1.0"
 bincode = "1.3.3"
-bio = "0.39.2"
+bio = "3.0.0"
 cue = {path="vendor/cue", version = "0.1"}
 env_logger = "0.3"
 flate2 = "0.2"
@@ -27,9 +25,6 @@ serde_json = "1.0"
 ssw = { path = "ssw" }
 tar = "0.4"
 chrono = { version = "0.4", features = ["clock"] }
-
-[patch.crates-io]
-nalgebra = "0.33"
 
 
 [dependencies.clap]
