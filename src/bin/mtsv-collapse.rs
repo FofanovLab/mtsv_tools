@@ -4,12 +4,11 @@ extern crate log;
 extern crate clap;
 extern crate mtsv;
 
-
 use clap::{App, Arg};
 use std::fs::File;
 use std::io::BufWriter;
 
-use mtsv::collapse::{collapse_edit_paths, CollapseMode};
+use mtsv::collapse::{collapse_edit_paths, write_taxa_report, CollapseMode};
 use mtsv::util;
 
 fn main() {
@@ -44,12 +43,11 @@ fn main() {
             .takes_value(true)
             .default_value("4")
             .help("Number of worker threads for sorting."))
-        .arg(Arg::with_name("EDIT_DELTA")
-            .long("edit-delta")
+        .arg(Arg::with_name("REPORT")
+            .long("report")
             .takes_value(true)
-            .help("Keep hits within (min edit + delta) per read."))
+            .help("Write per-taxid stats TSV report."))
         .get_matches();
-
 
     // setup logger
     util::init_logging(if args.is_present("VERBOSE") {
@@ -70,20 +68,21 @@ fn main() {
         _ => CollapseMode::TaxId,
     };
 
-    let edit_delta = match args.value_of("EDIT_DELTA") {
-        Some(s) => Some(s.parse::<u32>().expect("Invalid edit-delta value!")),
-        None => None,
-    };
-
     let max_threads = match args.value_of("THREADS") {
         Some(s) => s.parse::<usize>().expect("Invalid thread count!"),
         None => 4,
     };
+    let report_path = args.value_of("REPORT");
 
-    match collapse_edit_paths(&files, &mut outfile, mode, edit_delta, max_threads) {
-        Ok(()) => {
-            info!("Successfully collapsed files. Output available in {}",
-                  outpath)
+    match collapse_edit_paths(&files, &mut outfile, mode, max_threads) {
+        Ok(report) => {
+            info!(
+                "Successfully collapsed files. Output available in {}",
+                outpath
+            );
+            if let Some(path) = report_path {
+                write_taxa_report(path, &report).expect("Unable to write taxa report");
+            }
         },
         Err(why) => panic!("Problem collapsing files: {}", why),
     }
