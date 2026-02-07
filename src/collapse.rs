@@ -22,7 +22,7 @@ pub enum CollapseMode {
     /// Collapse hits by taxid + gi.
     TaxIdGi,
 }
-
+/// Parsed hit from an edit distance result line, including taxid, optional gi, optional offset, edit distance, and flags for whether gi and offset were present.
 struct ParsedHit {
     tax_id: TaxId,
     gi: Gi,
@@ -32,6 +32,7 @@ struct ParsedHit {
     has_offset: bool,
 }
 
+/// Item in the heap for merging sorted files, ordered by read id and then file index.
 #[derive(Debug)]
 struct HeapItem {
     read_id: String,
@@ -39,21 +40,23 @@ struct HeapItem {
     idx: usize,
 }
 
+/// Report of collapsing results, including per-taxid stats and total reads processed.
 #[derive(Default)]
 pub struct CollapseReport {
-    pub stats: HashMap<TaxId, TaxidStats>,
-    pub total_reads: usize,
+    pub stats: HashMap<TaxId, TaxidStats>, /// Map of taxid to stats for that taxid.
+    pub total_reads: usize,             /// Total number of reads processed across all taxids.
 }
-
+/// Stats for a single taxid, counting how many reads had only this taxid as a hit, how many had this taxid as the only best hit, how many had this taxid tied for best hit, and how many had this taxid but it was not the best hit.
 #[derive(Default)]
 pub struct TaxidStats {
-    pub only_hit: usize,
-    pub only_best: usize,
-    pub tied_best: usize,
-    pub not_best: usize,
+    pub only_hit: usize,   /// Number of reads with only this taxid as a hit.
+    pub only_best: usize, /// Number of reads with this taxid as the only best hit.
+    pub tied_best: usize, /// Number of reads with this taxid tied for best hit.
+    pub not_best: usize, /// Number of reads with this taxid but it was not the best hit.
 }
 
 impl TaxidStats {
+    /// Returns the total count of reads for this taxid across all categories.
     fn total(&self) -> usize {
         self.only_hit + self.only_best + self.tied_best + self.not_best
     }
