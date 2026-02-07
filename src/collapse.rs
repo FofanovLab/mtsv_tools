@@ -43,15 +43,21 @@ struct HeapItem {
 /// Report of collapsing results, including per-taxid stats and total reads processed.
 #[derive(Default)]
 pub struct CollapseReport {
-    pub stats: HashMap<TaxId, TaxidStats>, /// Map of taxid to stats for that taxid.
+    /// Map of taxid to stats for that taxid.
+    pub stats: HashMap<TaxId, TaxidStats>,
+    /// Total number of reads processed across all taxids.
     pub total_reads: usize,
 }
 /// Stats for a single taxid, counting how many reads had only this taxid as a hit, how many had this taxid as the only best hit, how many had this taxid tied for best hit, and how many had this taxid but it was not the best hit.
 #[derive(Default)]
 pub struct TaxidStats {
-    pub only_hit: usize,   /// Number of reads with only this taxid as a hit.
-    pub only_best: usize, /// Number of reads with this taxid as the only best hit.
-    pub tied_best: usize, /// Number of reads with this taxid tied for best hit.
+    /// Number of reads with only this taxid as a hit.
+    pub only_hit: usize,
+    /// Number of reads with this taxid as the only best hit.
+    pub only_best: usize,
+    /// Number of reads with this taxid tied for best hit.
+    pub tied_best: usize,
+    /// Number of reads with this taxid but it was not the best hit.
     pub not_best: usize,
 }
 
