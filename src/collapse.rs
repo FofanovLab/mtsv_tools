@@ -712,6 +712,7 @@ where
     Ok(report)
 }
 
+/// Writes a taxa report TSV file from the given collapse report, including counts and percentages for each taxid.
 pub fn write_taxa_report(report_path: &str, report: &CollapseReport) -> MtsvResult<()> {
     let file = File::create(report_path)?;
     let mut writer = BufWriter::new(file);
