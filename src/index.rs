@@ -404,7 +404,6 @@ impl MGIndex {
             // -1 for substitution, -1 for gap open, -1 for gap extend
             // means that we need to allow for a hit to the alignment score of up to 1.5x editdist
             if score as usize >= sequence.len() - (edit_distance * 2) {
-                println!("candidate passed sw score threshold");
                 // the SW check is faster (w/ SIMD) than the min_edit_distance check, so if we're
                 // within an acceptable tolerance, now do the expensive check
                 let edits = aligner.min_edit_distance(&seq_no_n, cand_seq);

@@ -131,6 +131,7 @@ fn record_taxid_stats(report: &mut CollapseReport, summary: &HashMap<TaxId, u32>
         let stats = report.stats.entry(taxid).or_default();
         if only_one {
             stats.only_hit += 1;
+            continue;
         }
         if edit == min_edit {
             if best_count == 1 {
