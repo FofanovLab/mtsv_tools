@@ -15,7 +15,7 @@ fn main() {
     let args = App::new("mtsv")
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
-        .about("Metagenomics binning tool.")
+        .about("Extract reference sequences for taxids present in mtsv results.")
         .arg(Arg::with_name("INDEX")
             .short("i")
             .long("index")

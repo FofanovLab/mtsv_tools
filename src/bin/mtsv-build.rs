@@ -17,7 +17,7 @@ fn main() {
     let args = App::new("mtsv-build")
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
-        .about("Index construction for mtsv metagenomics binning tool.")
+        .about("Index construction for mtsv metagenomic and metatranscriptomic assignment tool.")
         .arg(Arg::with_name("FASTA")
             .short("f")
             .long("fasta")

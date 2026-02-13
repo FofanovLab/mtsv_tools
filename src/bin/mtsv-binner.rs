@@ -1,29 +1,28 @@
 #[macro_use]
 extern crate log;
 
+extern crate bio;
 extern crate clap;
 extern crate flate2;
-extern crate bio;
 
 extern crate mtsv;
 
+use bio::io::{fasta, fastq};
 use clap::{App, Arg};
 use flate2::read::GzDecoder;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
-use bio::io::{fasta, fastq};
 
 use mtsv::binner;
 use mtsv::util;
 
 fn main() {
-
     let args = App::new("mtsv")
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
-        .about("Metagenomics binning tool.")
+        .about("Metagenomic and metatranscriptomic assignment tool.")
         .arg(Arg::with_name("FASTA")
             .short("fa")
             .long("fasta")
@@ -52,13 +51,9 @@ fn main() {
             .long("results")
             .takes_value(true)
             .help("Path to write results file."))
-        .arg(Arg::with_name("APPEND_RESULTS")
-            .long("append-results")
-            .help("Append to the results file instead of truncating it."))
-        .arg(Arg::with_name("RESUME_FROM")
-            .long("resume-from")
-            .takes_value(true)
-            .help("Existing results file to resume from; read offset is computed from it."))
+        .arg(Arg::with_name("FORCE_OVERWRITE")
+            .long("force-overwrite")
+            .help("Always overwrite the results file instead of resuming from existing output."))
         .arg(Arg::with_name("NUM_THREADS")
             .short("t")
             .long("threads")
@@ -118,18 +113,12 @@ fn main() {
             .default_value("default"))
         .get_matches();
 
-
     // setup logger
     util::init_logging(if args.is_present("VERBOSE") {
         log::LogLevelFilter::Debug
     } else {
         log::LogLevelFilter::Info
     });
-
-    
- 
-    
-    
 
     let exit_code = {
         let results_path = args.value_of("RESULTS_PATH");
@@ -149,7 +138,9 @@ fn main() {
         }
 
         let num_threads = match args.value_of("NUM_THREADS") {
-            Some(s) => s.parse::<usize>().expect("Invalid number entered for number of threads!"),
+            Some(s) => s
+                .parse::<usize>()
+                .expect("Invalid number entered for number of threads!"),
             None => unreachable!(),
         };
 
@@ -161,7 +152,7 @@ fn main() {
                     panic!("Edit tolerance proportion must be between 0 and 1, inclusive");
                 }
                 edit
-            }
+            },
             None => unreachable!(),
         };
 
@@ -187,7 +178,9 @@ fn main() {
                 if seed_gap < 2 {
                     warn!("Seed interval may be small enough that it causes performance issues.");
                 } else if seed_gap > 10 {
-                    warn!("Seed interval may be large enough that significant results are ignored.");
+                    warn!(
+                        "Seed interval may be large enough that significant results are ignored."
+                    );
                 }
 
                 seed_gap
@@ -214,9 +207,11 @@ fn main() {
                 if max_hits > 100000 {
                     warn!("Max hits may be large enough to cause performance issues.");
                 } else if max_hits < 10000 {
-                    warn!("Max hits may be too small which may cause some alignments to be missed.");
-                } 
-                
+                    warn!(
+                        "Max hits may be too small which may cause some alignments to be missed."
+                    );
+                }
+
                 max_hits
             },
             None => panic!("Missing parameter: max-hits"),
@@ -232,19 +227,21 @@ fn main() {
 
         let max_assignments = match args.value_of("MAX_ASSIGNMENTS") {
             Some(s) => {
-                let max_assignments = s.parse::<usize>()
+                let max_assignments = s
+                    .parse::<usize>()
                     .expect("Invalid number entered for max assignments!");
                 Some(max_assignments)
-            }
+            },
             None => None,
         };
 
         let max_candidates_checked = match args.value_of("MAX_CANDIDATES") {
             Some(s) => {
-                let max_candidates = s.parse::<usize>()
+                let max_candidates = s
+                    .parse::<usize>()
                     .expect("Invalid number entered for max candidates!");
                 Some(max_candidates)
-            }
+            },
             None => None,
         };
 
@@ -259,69 +256,75 @@ fn main() {
             _ => false,
         };
 
-        let resume_from = args.value_of("RESUME_FROM");
-        let append_results = args.is_present("APPEND_RESULTS") || resume_from.is_some();
-        let resume_offset = if let Some(resume_path) = resume_from {
-            if let Some(results_path) = results_path {
-                if results_path != resume_path {
-                    error!("--resume-from must match --results when resuming.");
-                    Err(4)
+        let force_overwrite = args.is_present("FORCE_OVERWRITE");
+
+        match results_path {
+            None => {
+                error!("No results path provided!");
+                3
+            },
+            Some(results_path) => {
+                let append_results = !force_overwrite && Path::new(results_path).exists();
+                if force_overwrite {
+                    info!("Forcing overwrite of {}", results_path);
+                } else if append_results {
+                    info!(
+                        "Existing results detected at {}; resuming previous run.",
+                        results_path
+                    );
+                }
+
+                let resume_offset = if force_overwrite {
+                    Ok(0)
                 } else {
-                    match resume_offset_from_results(resume_path, input_path, input_type) {
+                    match resume_offset_if_exists(results_path, input_path, input_type) {
                         Ok(offset) => {
-                            info!("Resuming after read offset {} from {}", offset, resume_path);
+                            info!(
+                                "Resuming after read offset {} from {}",
+                                offset, results_path
+                            );
                             Ok(offset)
-                        }
+                        },
                         Err(why) => {
                             error!("Error computing resume offset: {}", why);
                             Err(4)
-                        }
-                    }
-                }
-            } else {
-                Err(4)
-            }
-        } else {
-            Ok(0)
-        };
-
-        match resume_offset {
-            Err(code) => code,
-            Ok(resume_offset) => {
-                let read_offset = read_offset + resume_offset;
-
-                if results_path.is_none() {
-                    error!("No results path provided!");
-                    3
-                } else {
-                    let results_path = results_path.unwrap();
-                    match binner::get_fastx_and_write_matching_bin_ids(
-                                                             input_path,
-                                                             input_type,
-                                                             index_path,
-                                                             results_path,
-                                                             append_results,
-                                                             num_threads,
-                                                             edit_tolerance,
-                                                             seed_size,
-                                                             seed_gap,
-                                                             min_seeds,
-                                                             max_hits,
-                                                             tune_max_hits,
-                                                             max_assignments,
-                                                             max_candidates_checked,
-                                                             read_offset,
-                                                             long_info_output) {
-                        Ok(_) => 0,
-                        Err(why) => {
-                            error!("Error running query: {}", why);
-                            2
                         },
                     }
-                }
-            }
-        }
+                };
 
+                match resume_offset {
+                    Err(code) => code,
+                    Ok(resume_offset) => {
+                        let read_offset = read_offset + resume_offset;
+
+                        match binner::get_fastx_and_write_matching_bin_ids(
+                            input_path,
+                            input_type,
+                            index_path,
+                            results_path,
+                            append_results,
+                            num_threads,
+                            edit_tolerance,
+                            seed_size,
+                            seed_gap,
+                            min_seeds,
+                            max_hits,
+                            tune_max_hits,
+                            max_assignments,
+                            max_candidates_checked,
+                            read_offset,
+                            long_info_output,
+                        ) {
+                            Ok(_) => 0,
+                            Err(why) => {
+                                error!("Error running query: {}", why);
+                                2
+                            },
+                        }
+                    },
+                }
+            },
+        }
     };
 
     std::process::exit(exit_code);
@@ -360,7 +363,11 @@ fn read_ids_from_results(path: &str) -> Result<HashSet<String>, String> {
     Ok(ids)
 }
 
-fn resume_offset_from_results(results_path: &str, input_path: &str, input_type: &str) -> Result<usize, String> {
+fn resume_offset_from_results(
+    results_path: &str,
+    input_path: &str,
+    input_type: &str,
+) -> Result<usize, String> {
     let ids = read_ids_from_results(results_path)?;
     let input_type = input_type.to_ascii_uppercase();
     let mut last_idx: Option<usize> = None;
@@ -386,4 +393,19 @@ fn resume_offset_from_results(results_path: &str, input_path: &str, input_type: 
     }
 
     Ok(last_idx.map(|i| i + 1).unwrap_or(0))
+}
+
+fn resume_offset_if_exists(
+    results_path: &str,
+    input_path: &str,
+    input_type: &str,
+) -> Result<usize, String> {
+    if !Path::new(results_path).exists() {
+        info!(
+            "Result file {} does not exist; starting at read offset 0",
+            results_path
+        );
+        return Ok(0);
+    }
+    resume_offset_from_results(results_path, input_path, input_type)
 }

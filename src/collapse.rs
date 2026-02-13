@@ -2,17 +2,17 @@
 
 use crate::binner::write_single_line;
 use crate::error::*;
+use crate::index::{Gi, TaxId};
 use crate::io::parse_findings;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
-use std::fs::{self, File};
 use std::fmt::Write as FmtWrite;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::index::{TaxId, Gi};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Collapse mode for edit-distance results.
@@ -22,7 +22,7 @@ pub enum CollapseMode {
     /// Collapse hits by taxid + gi.
     TaxIdGi,
 }
-
+/// Parsed hit from an edit distance result line, including taxid, optional gi, optional offset, edit distance, and flags for whether gi and offset were present.
 struct ParsedHit {
     tax_id: TaxId,
     gi: Gi,
@@ -32,11 +32,40 @@ struct ParsedHit {
     has_offset: bool,
 }
 
+/// Item in the heap for merging sorted files, ordered by read id and then file index.
 #[derive(Debug)]
 struct HeapItem {
     read_id: String,
     line: String,
     idx: usize,
+}
+
+/// Report of collapsing results, including per-taxid stats and total reads processed.
+#[derive(Default)]
+pub struct CollapseReport {
+    /// Map of taxid to stats for that taxid.
+    pub stats: HashMap<TaxId, TaxidStats>,
+    /// Total number of reads processed across all taxids.
+    pub total_reads: usize,
+}
+/// Stats for a single taxid, counting how many reads had only this taxid as a hit, how many had this taxid as the only best hit, how many had this taxid tied for best hit, and how many had this taxid but it was not the best hit.
+#[derive(Default)]
+pub struct TaxidStats {
+    /// Number of reads with only this taxid as a hit.
+    pub only_hit: usize,
+    /// Number of reads with this taxid as the only best hit.
+    pub only_best: usize,
+    /// Number of reads with this taxid tied for best hit.
+    pub tied_best: usize,
+    /// Number of reads with this taxid but it was not the best hit.
+    pub not_best: usize,
+}
+
+impl TaxidStats {
+    /// Returns the total count of reads for this taxid across all categories.
+    fn total(&self) -> usize {
+        self.only_hit + self.only_best + self.tied_best + self.not_best
+    }
 }
 
 impl PartialEq for HeapItem {
@@ -62,19 +91,76 @@ impl Ord for HeapItem {
     }
 }
 
+fn aggregate_taxid_summary(
+    mode: CollapseMode,
+    taxid_hits: &HashMap<TaxId, u32>,
+    taxid_gi_hits: &HashMap<(TaxId, Gi), (u32, usize)>,
+) -> HashMap<TaxId, u32> {
+    let mut summary = HashMap::new();
+    match mode {
+        CollapseMode::TaxId => {
+            summary.extend(taxid_hits.iter().map(|(taxid, edit)| (*taxid, *edit)));
+        },
+        CollapseMode::TaxIdGi => {
+            for (&(taxid, _), &(edit, _)) in taxid_gi_hits {
+                summary
+                    .entry(taxid)
+                    .and_modify(|current| {
+                        if edit < *current {
+                            *current = edit;
+                        }
+                    })
+                    .or_insert(edit);
+            }
+        },
+    }
+    summary
+}
+
+fn record_taxid_stats(report: &mut CollapseReport, summary: &HashMap<TaxId, u32>) {
+    if summary.is_empty() {
+        return;
+    }
+
+    let min_edit = summary.values().cloned().min().unwrap_or(0);
+    let best_count = summary.values().filter(|&&edit| edit == min_edit).count();
+    let only_one = summary.len() == 1;
+    report.total_reads += 1;
+
+    for (&taxid, &edit) in summary {
+        let stats = report.stats.entry(taxid).or_default();
+        if only_one {
+            stats.only_hit += 1;
+            continue;
+        }
+        if edit == min_edit {
+            if best_count == 1 {
+                stats.only_best += 1;
+            } else {
+                stats.tied_best += 1;
+            }
+        } else {
+            stats.not_best += 1;
+        }
+    }
+}
+
 /// Given a list of mtsv results file paths, collapse into a single one.
 pub fn collapse_files<R, W>(files: &mut [R], write_to: &mut W) -> MtsvResult<()>
-    where R: BufRead,
-          W: Write
+where
+    R: BufRead,
+    W: Write,
 {
     let mut results = BTreeMap::new();
 
     for ref mut r in files {
-
         for res in parse_findings(r) {
             let (readid, hits) = (res)?;
 
-            results.entry(readid).or_insert(BTreeSet::new()).extend(hits.into_iter());
+            results
+                .entry(readid)
+                .or_insert(BTreeSet::new())
+                .extend(hits.into_iter());
         }
     }
 
@@ -95,7 +181,9 @@ fn split_line(line: &str) -> MtsvResult<(&str, &str)> {
     let trimmed = line.trim_end_matches(&['\n', '\r'][..]);
     let mut halves = trimmed.rsplitn(2, ':');
     let hits = halves.next().unwrap_or("");
-    let read_id = halves.next().ok_or_else(|| MtsvError::InvalidHeader(trimmed.to_string()))?;
+    let read_id = halves
+        .next()
+        .ok_or_else(|| MtsvError::InvalidHeader(trimmed.to_string()))?;
     if read_id.is_empty() {
         return Err(MtsvError::InvalidHeader(trimmed.to_string()));
     }
@@ -109,18 +197,26 @@ fn read_id_from_line(line: &str) -> MtsvResult<&str> {
 
 fn parse_hit_token(token: &str) -> MtsvResult<ParsedHit> {
     let mut parts = token.split('=');
-    let left = parts.next().ok_or_else(|| MtsvError::InvalidHeader(token.to_string()))?;
-    let edit_raw = parts.next().ok_or_else(|| MtsvError::InvalidHeader(token.to_string()))?;
+    let left = parts
+        .next()
+        .ok_or_else(|| MtsvError::InvalidHeader(token.to_string()))?;
+    let edit_raw = parts
+        .next()
+        .ok_or_else(|| MtsvError::InvalidHeader(token.to_string()))?;
     if parts.next().is_some() {
         return Err(MtsvError::InvalidHeader(token.to_string()));
     }
 
-    let edit = edit_raw.parse::<u32>()
+    let edit = edit_raw
+        .parse::<u32>()
         .map_err(|_| MtsvError::InvalidInteger(edit_raw.to_string()))?;
 
     let mut left_parts = left.split('-');
-    let tax_raw = left_parts.next().ok_or_else(|| MtsvError::InvalidHeader(token.to_string()))?;
-    let tax_id = tax_raw.parse::<TaxId>()
+    let tax_raw = left_parts
+        .next()
+        .ok_or_else(|| MtsvError::InvalidHeader(token.to_string()))?;
+    let tax_id = tax_raw
+        .parse::<TaxId>()
         .map_err(|_| MtsvError::InvalidInteger(tax_raw.to_string()))?;
 
     let gi_raw = left_parts.next();
@@ -131,12 +227,20 @@ fn parse_hit_token(token: &str) -> MtsvResult<ParsedHit> {
     }
 
     let (gi, has_gi) = match gi_raw {
-        Some(v) => (v.parse::<Gi>().map_err(|_| MtsvError::InvalidInteger(v.to_string()))?, true),
+        Some(v) => (
+            v.parse::<Gi>()
+                .map_err(|_| MtsvError::InvalidInteger(v.to_string()))?,
+            true,
+        ),
         None => (Gi(0), false),
     };
 
     let (offset, has_offset) = match offset_raw {
-        Some(v) => (v.parse::<usize>().map_err(|_| MtsvError::InvalidInteger(v.to_string()))?, true),
+        Some(v) => (
+            v.parse::<usize>()
+                .map_err(|_| MtsvError::InvalidInteger(v.to_string()))?,
+            true,
+        ),
         None => (0usize, false),
     };
 
@@ -180,7 +284,11 @@ fn write_collapsed_taxid<W: Write>(
 
     let mut first = true;
     for (taxid, edit) in items {
-        if !first { line.push(','); } else { first = false; }
+        if !first {
+            line.push(',');
+        } else {
+            first = false;
+        }
         let _ = write!(line, "{}={}", taxid.0, edit);
     }
     line.push('\n');
@@ -198,13 +306,13 @@ fn write_collapsed_taxid_gi<W: Write>(
         return Ok(());
     }
 
-    let mut items: Vec<((TaxId, Gi), (u32, usize))> =
-        hits.iter().map(|(k, v)| (*k, *v)).collect();
+    let mut items: Vec<((TaxId, Gi), (u32, usize))> = hits.iter().map(|(k, v)| (*k, *v)).collect();
     items.sort_by(|a, b| {
-        a.0.0.cmp(&b.0.0)
-            .then(a.0.1.cmp(&b.0.1))
-            .then(a.1.0.cmp(&b.1.0))
-            .then(a.1.1.cmp(&b.1.1))
+        a.0 .0
+            .cmp(&b.0 .0)
+            .then(a.0 .1.cmp(&b.0 .1))
+            .then(a.1 .0.cmp(&b.1 .0))
+            .then(a.1 .1.cmp(&b.1 .1))
     });
 
     let mut line = String::with_capacity(header.len() + 1 + items.len() * 18);
@@ -213,7 +321,11 @@ fn write_collapsed_taxid_gi<W: Write>(
 
     let mut first = true;
     for ((taxid, gi), (edit, offset)) in items {
-        if !first { line.push(','); } else { first = false; }
+        if !first {
+            line.push(',');
+        } else {
+            first = false;
+        }
         if include_offset {
             let _ = write!(line, "{}-{}-{}={}", taxid.0, gi.0, offset, edit);
         } else {
@@ -223,24 +335,6 @@ fn write_collapsed_taxid_gi<W: Write>(
     line.push('\n');
     writer.write_all(line.as_bytes())?;
     Ok(())
-}
-
-fn filter_taxid_hits(hits: &mut HashMap<TaxId, u32>, edit_delta: u32) {
-    if hits.is_empty() {
-        return;
-    }
-    let min_edit = hits.values().cloned().min().unwrap_or(0);
-    let cutoff = min_edit.saturating_add(edit_delta);
-    hits.retain(|_, edit| *edit <= cutoff);
-}
-
-fn filter_taxid_gi_hits(hits: &mut HashMap<(TaxId, Gi), (u32, usize)>, edit_delta: u32) {
-    if hits.is_empty() {
-        return;
-    }
-    let min_edit = hits.values().map(|v| v.0).min().unwrap_or(0);
-    let cutoff = min_edit.saturating_add(edit_delta);
-    hits.retain(|_, (edit, _)| *edit <= cutoff);
 }
 
 fn create_temp_dir() -> MtsvResult<PathBuf> {
@@ -255,18 +349,25 @@ fn create_temp_dir() -> MtsvResult<PathBuf> {
     for _ in 0..10 {
         let mut base = std::env::temp_dir();
         let count = COUNTER.fetch_add(1, Ordering::Relaxed);
-        base.push(format!("mtsv-collapse-{}-{}-{}", std::process::id(), ts, count));
+        base.push(format!(
+            "mtsv-collapse-{}-{}-{}",
+            std::process::id(),
+            ts,
+            count
+        ));
         match fs::create_dir(&base) {
             Ok(()) => return Ok(base),
             Err(err) => {
                 if err.kind() != std::io::ErrorKind::AlreadyExists {
                     return Err(err.into());
                 }
-            }
+            },
         }
     }
 
-    Err(MtsvError::AnyhowError("Unable to create temp dir".to_string()))
+    Err(MtsvError::AnyhowError(
+        "Unable to create temp dir".to_string(),
+    ))
 }
 
 fn write_sorted_chunk(
@@ -298,7 +399,11 @@ fn merge_sorted_chunks(chunks: &[PathBuf], output_path: &Path) -> MtsvResult<()>
             continue;
         }
         let read_id = read_id_from_line(&line)?.to_string();
-        heap.push(HeapItem { read_id, line: normalize_line(&line), idx });
+        heap.push(HeapItem {
+            read_id,
+            line: normalize_line(&line),
+            idx,
+        });
     }
 
     let mut writer = BufWriter::new(File::create(output_path)?);
@@ -310,7 +415,11 @@ fn merge_sorted_chunks(chunks: &[PathBuf], output_path: &Path) -> MtsvResult<()>
             continue;
         }
         let read_id = read_id_from_line(&line)?.to_string();
-        heap.push(HeapItem { read_id, line: normalize_line(&line), idx: item.idx });
+        heap.push(HeapItem {
+            read_id,
+            line: normalize_line(&line),
+            idx: item.idx,
+        });
     }
     Ok(())
 }
@@ -388,28 +497,26 @@ fn sort_files_in_parallel(
         let temp_dir = temp_dir.to_path_buf();
         let results = Arc::clone(&results);
         let errors = Arc::clone(&errors);
-        handles.push(thread::spawn(move || {
-            loop {
-                let next = {
-                    let guard = rx.lock().unwrap();
-                    guard.recv()
-                };
-                let (idx, path) = match next {
-                    Ok(item) => item,
-                    Err(_) => break,
-                };
-                match external_sort_file(&path, &temp_dir, chunk_bytes, idx) {
-                    Ok(sorted) => {
-                        let mut guard = results.lock().unwrap();
-                        guard[idx] = Some(sorted);
+        handles.push(thread::spawn(move || loop {
+            let next = {
+                let guard = rx.lock().unwrap();
+                guard.recv()
+            };
+            let (idx, path) = match next {
+                Ok(item) => item,
+                Err(_) => break,
+            };
+            match external_sort_file(&path, &temp_dir, chunk_bytes, idx) {
+                Ok(sorted) => {
+                    let mut guard = results.lock().unwrap();
+                    guard[idx] = Some(sorted);
+                },
+                Err(err) => {
+                    let mut guard = errors.lock().unwrap();
+                    if guard.is_none() {
+                        *guard = Some(err);
                     }
-                    Err(err) => {
-                        let mut guard = errors.lock().unwrap();
-                        if guard.is_none() {
-                            *guard = Some(err);
-                        }
-                    }
-                }
+                },
             }
         }));
     }
@@ -425,9 +532,10 @@ fn sort_files_in_parallel(
     let guard = results.lock().unwrap();
     let mut collected = Vec::with_capacity(guard.len());
     for path in guard.iter() {
-        collected.push(path.clone().ok_or_else(|| {
-            MtsvError::AnyhowError("Missing sorted file path".to_string())
-        })?);
+        collected.push(
+            path.clone()
+                .ok_or_else(|| MtsvError::AnyhowError("Missing sorted file path".to_string()))?,
+        );
     }
     Ok(collected)
 }
@@ -436,8 +544,7 @@ fn collapse_sorted_files<W: Write>(
     sorted_paths: &[PathBuf],
     write_to: &mut W,
     mode: CollapseMode,
-    edit_delta: Option<u32>,
-) -> MtsvResult<()> {
+) -> MtsvResult<CollapseReport> {
     let mut readers = Vec::new();
     for path in sorted_paths {
         readers.push(BufReader::new(File::open(path)?));
@@ -450,13 +557,18 @@ fn collapse_sorted_files<W: Write>(
             continue;
         }
         let read_id = read_id_from_line(&line)?.to_string();
-        heap.push(HeapItem { read_id, line: normalize_line(&line), idx });
+        heap.push(HeapItem {
+            read_id,
+            line: normalize_line(&line),
+            idx,
+        });
     }
 
     let mut current_id: Option<String> = None;
     let mut taxid_hits: HashMap<TaxId, u32> = HashMap::new();
     let mut taxid_gi_hits: HashMap<(TaxId, Gi), (u32, usize)> = HashMap::new();
     let mut offset_format: Option<bool> = None;
+    let mut report = CollapseReport::default();
 
     while let Some(item) = heap.pop() {
         let (read_id, hits_str) = split_line(&item.line)?;
@@ -464,20 +576,14 @@ fn collapse_sorted_files<W: Write>(
 
         if current_id.as_ref().map(|r| r != &read_id).unwrap_or(false) {
             let header = current_id.as_ref().unwrap();
+            let summary = aggregate_taxid_summary(mode, &taxid_hits, &taxid_gi_hits);
+            record_taxid_stats(&mut report, &summary);
             match mode {
-                CollapseMode::TaxId => {
-                    if let Some(delta) = edit_delta {
-                        filter_taxid_hits(&mut taxid_hits, delta);
-                    }
-                    write_collapsed_taxid(header, &taxid_hits, write_to)?
-                }
+                CollapseMode::TaxId => write_collapsed_taxid(header, &taxid_hits, write_to)?,
                 CollapseMode::TaxIdGi => {
-                    if let Some(delta) = edit_delta {
-                        filter_taxid_gi_hits(&mut taxid_gi_hits, delta);
-                    }
                     let include_offset = offset_format.unwrap_or(false);
                     write_collapsed_taxid_gi(header, &taxid_gi_hits, write_to, include_offset)?
-                }
+                },
             }
             taxid_hits.clear();
             taxid_gi_hits.clear();
@@ -493,7 +599,7 @@ fn collapse_sorted_files<W: Write>(
                     if hit.edit < *entry {
                         *entry = hit.edit;
                     }
-                }
+                },
                 CollapseMode::TaxIdGi => {
                     if !hit.has_gi {
                         return Err(MtsvError::InvalidHeader(
@@ -510,11 +616,13 @@ fn collapse_sorted_files<W: Write>(
                         offset_format = Some(hit.has_offset);
                     }
 
-                    let entry = taxid_gi_hits.entry((hit.tax_id, hit.gi)).or_insert((hit.edit, hit.offset));
+                    let entry = taxid_gi_hits
+                        .entry((hit.tax_id, hit.gi))
+                        .or_insert((hit.edit, hit.offset));
                     if hit.edit < entry.0 || (hit.edit == entry.0 && hit.offset < entry.1) {
                         *entry = (hit.edit, hit.offset);
                     }
-                }
+                },
             }
         }
 
@@ -522,29 +630,27 @@ fn collapse_sorted_files<W: Write>(
         let mut line = String::new();
         if reader.read_line(&mut line)? != 0 {
             let read_id = read_id_from_line(&line)?.to_string();
-            heap.push(HeapItem { read_id, line: normalize_line(&line), idx: item.idx });
+            heap.push(HeapItem {
+                read_id,
+                line: normalize_line(&line),
+                idx: item.idx,
+            });
         }
     }
 
     if let Some(header) = current_id {
+        let summary = aggregate_taxid_summary(mode, &taxid_hits, &taxid_gi_hits);
+        record_taxid_stats(&mut report, &summary);
         match mode {
-            CollapseMode::TaxId => {
-                if let Some(delta) = edit_delta {
-                    filter_taxid_hits(&mut taxid_hits, delta);
-                }
-                write_collapsed_taxid(&header, &taxid_hits, write_to)?
-            }
+            CollapseMode::TaxId => write_collapsed_taxid(&header, &taxid_hits, write_to)?,
             CollapseMode::TaxIdGi => {
-                if let Some(delta) = edit_delta {
-                    filter_taxid_gi_hits(&mut taxid_gi_hits, delta);
-                }
                 let include_offset = offset_format.unwrap_or(false);
                 write_collapsed_taxid_gi(&header, &taxid_gi_hits, write_to, include_offset)?
-            }
+            },
         }
     }
 
-    Ok(())
+    Ok(report)
 }
 
 /// Given a list of mtsv edit distance result file paths, collapse into a single one.
@@ -552,28 +658,33 @@ pub fn collapse_edit_paths<P: AsRef<Path>, W: Write>(
     paths: &[P],
     write_to: &mut W,
     mode: CollapseMode,
-    edit_delta: Option<u32>,
     max_threads: usize,
-) -> MtsvResult<()> {
+) -> MtsvResult<CollapseReport> {
     let paths: Vec<PathBuf> = paths.iter().map(|p| p.as_ref().to_path_buf()).collect();
     let temp_dir = create_temp_dir()?;
     let chunk_bytes = 128 * 1024 * 1024;
 
     let sorted_paths = sort_files_in_parallel(&paths, &temp_dir, chunk_bytes, max_threads)?;
-    let result = collapse_sorted_files(&sorted_paths, write_to, mode, edit_delta);
+    let report = collapse_sorted_files(&sorted_paths, write_to, mode)?;
 
     for path in sorted_paths {
         let _ = fs::remove_file(path);
     }
     let _ = fs::remove_dir_all(&temp_dir);
 
-    result
+    Ok(report)
 }
 
 /// Given a list of mtsv edit distance result file readers, collapse into a single one.
-pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W, mode: CollapseMode, edit_delta: Option<u32>, max_threads: usize) -> MtsvResult<()>
-    where R: BufRead,
-          W: Write
+pub fn collapse_edit_files<R, W>(
+    files: &mut [R],
+    write_to: &mut W,
+    mode: CollapseMode,
+    max_threads: usize,
+) -> MtsvResult<CollapseReport>
+where
+    R: BufRead,
+    W: Write,
 {
     let temp_dir = create_temp_dir()?;
     let mut temp_paths = Vec::new();
@@ -592,29 +703,56 @@ pub fn collapse_edit_files<R, W>(files: &mut [R], write_to: &mut W, mode: Collap
         temp_paths.push(path);
     }
 
-    let result = collapse_edit_paths(&temp_paths, write_to, mode, edit_delta, max_threads);
+    let report = collapse_edit_paths(&temp_paths, write_to, mode, max_threads)?;
 
     for path in temp_paths {
         let _ = fs::remove_file(path);
     }
     let _ = fs::remove_dir_all(&temp_dir);
 
-    result
+    Ok(report)
 }
 
+/// Writes a taxa report TSV file from the given collapse report, including counts and percentages for each taxid.
+pub fn write_taxa_report(report_path: &str, report: &CollapseReport) -> MtsvResult<()> {
+    let file = File::create(report_path)?;
+    let mut writer = BufWriter::new(file);
+    writeln!(
+        writer,
+        "taxid\tonly_hit\tonly_hit_pct\tonly_best\tonly_best_pct\ttied_best\ttied_best_pct\tnot_best\tnot_best_pct\ttotal_reads\ttotal_pct"
+    )?;
 
+    let denom = report.total_reads.max(1) as f64;
+    let mut entries: Vec<_> = report.stats.iter().collect();
+    entries.sort_by_key(|(taxid, _)| taxid.0);
 
+    for (taxid, stats) in entries {
+        let total = stats.total();
+        let format_pct = |value: usize| (value as f64 / denom * 100.0);
+        writeln!(
+            writer,
+            "{}\t{}\t{:.2}\t{}\t{:.2}\t{}\t{:.2}\t{}\t{:.2}\t{}\t{:.2}",
+            taxid.0,
+            stats.only_hit,
+            format_pct(stats.only_hit),
+            stats.only_best,
+            format_pct(stats.only_best),
+            stats.tied_best,
+            format_pct(stats.tied_best),
+            stats.not_best,
+            format_pct(stats.not_best),
+            total,
+            total as f64 / denom * 100.0,
+        )?;
+    }
 
-        
-    
-
-
-
+    Ok(())
+}
 
 #[cfg(test)]
 mod test {
-    use std::io::Cursor;
     use super::*;
+    use std::io::Cursor;
 
     #[test]
     fn simple_collapse() {
@@ -656,7 +794,7 @@ r2:3=1";
         let mut buf = Vec::new();
         let mut infiles = vec![Cursor::new(a), Cursor::new(b)];
 
-        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, None, 1).unwrap();
+        let _ = collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, 1).unwrap();
 
         let buf_str = String::from_utf8(buf).unwrap();
         let expected = "r1:1=2,2=9\nr2:3=1\n";
@@ -671,25 +809,10 @@ r2:3=1";
         let mut buf = Vec::new();
         let mut infiles = vec![Cursor::new(a), Cursor::new(b)];
 
-        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxIdGi, None, 1).unwrap();
+        let _ = collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxIdGi, 1).unwrap();
 
         let buf_str = String::from_utf8(buf).unwrap();
         let expected = "r1:1-5-2=4,2-8-1=6\nr2:2-9-1=2\n";
-        assert_eq!(expected, &buf_str);
-    }
-
-    #[test]
-    fn collapse_edit_distances_delta_filters() {
-        let a = "r1:1=2,2=5,3=8\n";
-        let b = "r1:4=3,5=10\n";
-
-        let mut buf = Vec::new();
-        let mut infiles = vec![Cursor::new(a), Cursor::new(b)];
-
-        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxId, Some(1), 1).unwrap();
-
-        let buf_str = String::from_utf8(buf).unwrap();
-        let expected = "r1:1=2,4=3\n";
         assert_eq!(expected, &buf_str);
     }
 }

@@ -90,7 +90,7 @@ This will break up the reference fasta into a series of smaller files and place 
 
 ```
 mtsv-chunk 2.0.0
-Adam Perry <adam.n.perry@gmail.com>:Tara Furstenau <tara.furstenau@gmail.com>
+Tara Furstenau <tara.furstenau@gmail.com>
 Split a FASTA reference database into chunks for index generation.
 
 USAGE:
@@ -121,7 +121,7 @@ See the help message for other options.
 ```
 $ mtsv-build --help
 mtsv-build 2.0.0
-Adam Perry <adam.n.perry@gmail.com>:Tara Furstenau <tara.furstenau@gmail.com>
+Tara Furstenau <tara.furstenau@gmail.com>
 Index construction for mtsv metagenomics binning tool.
 
 USAGE:
@@ -165,7 +165,7 @@ See the help message for other options.
 ```
 $ mtsv-binner --help
 mtsv 2.0.0
-Adam Perry <adam.n.perry@gmail.com>:Tara Furstenau <tara.furstenau@gmail.com>
+Tara Furstenau <tara.furstenau@gmail.com>
 Metagenomics binning tool.
 
 USAGE:
@@ -214,7 +214,7 @@ See the help message for other options.
 ```
 $ mtsv-collapse --help
 mtsv-collapse 2.0.0
-Adam Perry <adam.n.perry@gmail.com>:Tara Furstenau <tara.furstenau@gmail.com>
+Tara Furstenau <tara.furstenau@gmail.com>
 Tool for combining the output of multiple separate mtsv runs.
 
 USAGE:
@@ -231,5 +231,4 @@ OPTIONS:
 ARGS:
     <FILES>...    Path(s) to mtsv results files to collapse
 ```
-
 
