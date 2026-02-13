@@ -22,7 +22,7 @@ fn main() {
     let args = App::new("mtsv")
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
-        .about("Metagenomics binning tool.")
+        .about("Metagenomic and metatranscriptomic assignment tool.")
         .arg(Arg::with_name("FASTA")
             .short("fa")
             .long("fasta")
