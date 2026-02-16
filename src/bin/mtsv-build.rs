@@ -10,6 +10,7 @@ use bio::io::fasta;
 use clap::{App, Arg};
 use std::path::Path;
 use mtsv::builder;
+use mtsv::io;
 use mtsv::util;
 
 fn main() {
@@ -43,6 +44,13 @@ fn main() {
             .takes_value(true)
             .help("BWT occurance sampling rate. If sample interval is k, every k-th entry will be kept.")
             .default_value("64"))
+        .arg(Arg::with_name("MAPPING")
+            .long("mapping")
+            .help("Path to header->taxid/seqid mapping file (columns: header, taxid, seqid).")
+            .takes_value(true))
+        .arg(Arg::with_name("SKIP_MISSING")
+            .long("skip-missing")
+            .help("Skip FASTA records missing from the mapping file (warn instead of error)."))
         .get_matches();
 
 
@@ -68,12 +76,36 @@ fn main() {
             None => unreachable!(),
         };
 
+        let mapping_path = args.value_of("MAPPING");
+        let skip_missing = args.is_present("SKIP_MISSING");
+        if skip_missing && mapping_path.is_none() {
+            warn!("--skip-missing has no effect without --mapping.");
+        }
+
+        let mapping = match mapping_path {
+            Some(path) => match io::parse_header_mapping(path) {
+                Ok(map) => Some(map),
+                Err(why) => {
+                    error!("Error parsing mapping file: {}", why);
+                    return 1;
+                },
+            },
+            None => None,
+        };
+
         debug!("Opening FASTA database file...");
         let records = fasta::Reader::from_file(Path::new(fasta_path))
             .expect("Unable to open FASTA database for parsing.")
             .records();
 
-        match builder::build_and_write_index(records, index_path, fm_index_interval, sa_interval) {
+        match builder::build_and_write_index(
+            records,
+            index_path,
+            fm_index_interval,
+            sa_interval,
+            mapping.as_ref(),
+            skip_missing,
+        ) {
             Ok(_) => {
                 info!("Done building and writing index!");
                 0

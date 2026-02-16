@@ -65,28 +65,6 @@ Utilities
 MTSv implements a custom metagenomic and metatranscriptomic index (MG-index) based on the FM-index data structure.
 Reference indices must be built prior to performing taxonomic classification.
 
-### Reference file format
-To construct MG-indices, the input must be a multi-FASTA file with headers in the format:
-```
-SEQID-TAXID
-``` 
-For example, if a sequence has a unique identifier 12345 and belongs to NCBI TaxID 987, the header should be:
-```
->12345-987
-```
-
-##### Why this format is required
-
-MTSv intentionally requires a simple and rigid header format to ensure:
-
-Database agnosticism — reference sequences can originate from RefSeq, GenBank, custom assemblies, metagenome-assembled genomes (MAGs), or any other source.
-
-Deterministic TaxID mapping — the association between sequence and taxonomy is explicit and unambiguous.
-
-Rather than attempting to parse and interpret the wide variety of database-specific FASTA header conventions, MTSv enforces a minimal universal intermediate representation. This guarantees reproducibility by avoiding header parsing inconsistencies.
-
-We provide external wrapper scripts to automate conversion from common reference formats into the required SEQID-TAXID format. These intermediate FASTA files are only needed during index construction and can be safely deleted once MG-indices have been built.
-
 
 ### Chunking reference database (`mtsv-chunk`)
 Because MTSv was designed to be highly parallelizable, we recommend building multiple indices from moderately sized chunks of the reference database rather than a single monolithic FASTA file. This reduces peak memory usage and enables parallel execution during both index construction and read assignment.
@@ -129,7 +107,7 @@ OPTIONS:
 
 ## MG-Index build (`mtsv-build`)
 
-Constructs an MG-index (FM-index + metadata) from a FASTA chunk. One MG-index is created per FASTA file, and new indices can be added as the reference collection grows without needing to rebuild any of the existing indices.
+Constructs an MG-index (FM-index + metadata) from a FASTA fasta. One MG-index is created per FASTA file, and new indices can be added as the reference collection grows without needing to rebuild any of the existing indices.
 
 ```
 $ mtsv-build --fasta /path/to/chunkN.fasta --index /path/to/write/chunkN.index
@@ -146,6 +124,30 @@ Lower sampling intervals → larger index, faster queries
 Higher sampling intervals → smaller index, slower queries
 
 Using default settings, indices will be ~3.5x the size of the reference file and require about that much RAM to run the binning step. 
+
+##### Mapping reference sequence metadata during index build
+There are two approaches for mapping sequences to taxid.  
+Fasta headers can preformated as:
+
+```
+SEQID-TAXID
+``` 
+For example, if a sequence has a unique identifier 12345 and belongs to NCBI TaxID 987, the header should be:
+```
+>12345-987
+```
+
+Or an optional header mapping file may be provided:
+
+If your FASTA headers do not follow the default `SEQID-TAXID` format, you can provide a mapping file with a header row containing `header`, `taxid`, and `seqid` columns. The parser is delimiter-agnostic (comma, tab, or whitespace). The `header` value should match the FASTA ID (not the description).
+
+```
+header,taxid,seqid
+NC_000913.3,562,1038924
+NC_002695.2,83333,1038925
+```
+
+Use `--mapping /path/to/map.tsv` to enable the override. If a FASTA ID is missing from the mapping file, mtsv-build will error by default; use `--skip-missing` to warn and skip those records instead.
 
 ```
 Index construction for mtsv metagenomic and metatranscriptomic assignment tool.
@@ -166,6 +168,8 @@ OPTIONS:
     -i, --index <INDEX>                           Absolute path to mtsv index file.
         --sa-sample <SA_SAMPLE_RATE>
             Suffix array sampling rate. If sampling rate is k, every k-th entry will be kept. [default: 32]
+        --mapping <MAPPING>                       Path to header->taxid/seqid mapping file (columns: header, taxid, seqid).
+        --skip-missing                            Skip FASTA records missing from the mapping file (warn instead of error).
 ```
 
 
@@ -371,4 +375,3 @@ OPTIONS:
 ARGS:
     <TAXID>...    Extract reference sequences for taxid
 ```
-

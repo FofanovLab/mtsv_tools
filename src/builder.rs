@@ -4,21 +4,27 @@ use bio::io::fasta;
 
 use crate::error::*;
 use crate::index::MGIndex;
-use crate::io::{parse_fasta_db, write_to_file};
+use crate::io::{parse_fasta_db, parse_fasta_db_with_mapping, write_to_file, HeaderMap};
 use std::io;
 
 /// Build and write the metagenomic index to disk.
 ///
 /// The actual construction logic is in `mtsv::index::MGIndex`, this just handles the I/O and
 /// parsing.
-pub fn build_and_write_index<R>(records: R,
-                                index_path: &str,
-                                sample_interval: u32,
-                                suffix_sample: usize,)
-                                -> MtsvResult<()>
+pub fn build_and_write_index<R>(
+    records: R,
+    index_path: &str,
+    sample_interval: u32,
+    suffix_sample: usize,
+    mapping: Option<&HeaderMap>,
+    skip_missing: bool,
+) -> MtsvResult<()>
     where R: Iterator<Item = io::Result<fasta::Record>>
 {
-    let taxon_map = parse_fasta_db(records)?;
+    let taxon_map = match mapping {
+        Some(map) => parse_fasta_db_with_mapping(records, map, skip_missing)?,
+        None => parse_fasta_db(records)?,
+    };
 
     info!("File parsed, building index...");
     let index = MGIndex::new(taxon_map, sample_interval, suffix_sample);
@@ -54,7 +60,7 @@ AAAACACATATTTTCAAATCTAGTAAATATTAAATCTACTCTTGACGATTGCACCAATGCTACGCGATATAGATATCCAC
         let outfile_path = outfile.path().to_path_buf();
         let outfile_str = outfile_path.to_str().unwrap();
 
-        build_and_write_index(records, outfile_str, 32, 64).unwrap();
+        build_and_write_index(records, outfile_str, 32, 64, None, false).unwrap();
 
         assert!(outfile_path.exists());
         assert!(outfile_path.is_file());
@@ -78,7 +84,7 @@ TTTCACCTAGTACATTAAATACACGACCTAATGTTTCGTCACCAACAGGTACACTAATTTCTTTGCCTGTATCTTTTACA
         let outfile_path = outfile.path().to_path_buf();
         let outfile_str = outfile_path.to_str().unwrap();
 
-        build_and_write_index(records, outfile_str, 32, 64).unwrap();
+        build_and_write_index(records, outfile_str, 32, 64, None, false).unwrap();
     }
 
     #[test]
@@ -89,7 +95,7 @@ TTTCACCTAGTACATTAAATACACGACCTAATGTTTCGTCACCAACAGGTACACTAATTTCTTTGCCTGTATCTTTTACA
         let outfile_path = outfile.path().to_path_buf();
         let outfile_str = outfile_path.to_str().unwrap();
 
-        build_and_write_index(records, outfile_str, 8, 8).unwrap();
+        build_and_write_index(records, outfile_str, 8, 8, None, false).unwrap();
 
         let index: MGIndex = from_file(outfile_str).unwrap();
         let refs = index.get_references(9);

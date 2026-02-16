@@ -5,12 +5,111 @@ use bincode::{deserialize_from, serialize_into};
 use bio::io::fasta;
 use crate::error::*;
 use crate::index::{Database, TaxId, Hit, Gi};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, BufWriter};
 use std::path::Path;
 use crate::util::parse_read_header;
+
+/// Mapping of FASTA headers to (GI, TaxId).
+pub type HeaderMap = HashMap<String, (Gi, TaxId)>;
+
+fn detect_mapping_delimiter(line: &str) -> Option<char> {
+    let candidates = [',', '\t', ';', '|'];
+    for candidate in candidates.iter() {
+        if line.contains(*candidate) {
+            return Some(*candidate);
+        }
+    }
+    None
+}
+
+fn split_mapping_line<'a>(line: &'a str, delimiter: Option<char>) -> Vec<&'a str> {
+    match delimiter {
+        Some(delim) => line.split(delim).map(|field| field.trim()).collect(),
+        None => line.split_whitespace().collect(),
+    }
+}
+
+/// Parse a header mapping file with columns: header, taxid, seqid.
+pub fn parse_header_mapping(path: &str) -> MtsvResult<HeaderMap> {
+    let file = File::open(Path::new(path))?;
+    let reader = BufReader::new(file);
+    let mut lines = reader.lines();
+
+    let header_line = loop {
+        match lines.next() {
+            Some(line) => {
+                let line = line?;
+                if !line.trim().is_empty() {
+                    break line;
+                }
+            },
+            None => return Err(MtsvError::AnyhowError("Empty mapping file".to_string())),
+        }
+    };
+
+    let delimiter = detect_mapping_delimiter(&header_line);
+    let header_fields: Vec<String> = split_mapping_line(&header_line, delimiter)
+        .iter()
+        .map(|field| field.trim().to_ascii_lowercase())
+        .collect();
+
+    let header_idx = header_fields
+        .iter()
+        .position(|field| field == "header")
+        .ok_or_else(|| MtsvError::AnyhowError("Missing 'header' column in mapping file".to_string()))?;
+    let taxid_idx = header_fields
+        .iter()
+        .position(|field| field == "taxid")
+        .ok_or_else(|| MtsvError::AnyhowError("Missing 'taxid' column in mapping file".to_string()))?;
+    let seqid_idx = header_fields
+        .iter()
+        .position(|field| field == "seqid" || field == "gi")
+        .ok_or_else(|| MtsvError::AnyhowError("Missing 'seqid' column in mapping file".to_string()))?;
+
+    let mut mapping = HeaderMap::new();
+    for line in lines {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let fields = split_mapping_line(trimmed, delimiter);
+        let max_idx = header_idx.max(taxid_idx).max(seqid_idx);
+        if fields.len() <= max_idx {
+            return Err(MtsvError::AnyhowError(format!(
+                "Invalid mapping row (expected at least {} columns): {}",
+                max_idx + 1,
+                trimmed
+            )));
+        }
+
+        let header = fields[header_idx].trim();
+        if header.is_empty() {
+            return Err(MtsvError::AnyhowError("Empty header in mapping file".to_string()));
+        }
+
+        let taxid = fields[taxid_idx]
+            .parse::<u32>()
+            .map_err(|_| MtsvError::InvalidInteger(fields[taxid_idx].to_string()))?;
+        let seqid = fields[seqid_idx]
+            .parse::<u32>()
+            .map_err(|_| MtsvError::InvalidInteger(fields[seqid_idx].to_string()))?;
+
+        if mapping.contains_key(header) {
+            return Err(MtsvError::AnyhowError(format!(
+                "Duplicate header mapping for {}",
+                header
+            )));
+        }
+
+        mapping.insert(header.to_string(), (Gi(seqid), TaxId(taxid)));
+    }
+
+    Ok(mapping)
+}
 
 /// Parse an arbitrary `Decodable` type from a file path.
 pub fn from_file<T>(p: &str) -> MtsvResult<T>
@@ -43,6 +142,40 @@ pub fn parse_fasta_db<R>(records: R) -> MtsvResult<Database>
         let record = (record)?;
 
         let (gi, tax_id) = parse_read_header(record.id())?;
+        let sequences = taxon_map.entry(tax_id).or_insert_with(|| vec![]);
+        sequences.push((gi, record.seq().to_vec()));
+    }
+
+    Ok(taxon_map)
+}
+
+/// Parse a FASTA database using a mapping from headers to GI and TaxID.
+pub fn parse_fasta_db_with_mapping<R>(
+    records: R,
+    mapping: &HeaderMap,
+    skip_missing: bool,
+) -> MtsvResult<Database>
+    where R: Iterator<Item = io::Result<fasta::Record>>
+{
+    let mut taxon_map = BTreeMap::new();
+
+    debug!("Parsing FASTA database file with mapping override...");
+    for record in records {
+        let record = (record)?;
+        let header = record.id();
+        let (gi, tax_id) = match mapping.get(header) {
+            Some((gi, tax_id)) => (*gi, *tax_id),
+            None => {
+                if skip_missing {
+                    warn!("Missing mapping for header {}, skipping.", header);
+                    continue;
+                }
+                return Err(MtsvError::AnyhowError(format!(
+                    "Missing mapping for header {}",
+                    header
+                )));
+            },
+        };
         let sequences = taxon_map.entry(tax_id).or_insert_with(|| vec![]);
         sequences.push((gi, record.seq().to_vec()));
     }
@@ -339,5 +472,52 @@ asldkfj:3,4,5,6")
         assert_eq!(1, r2.len());
         assert_eq!(TaxId(10), r2[0].tax_id);
         assert_eq!(1, r2[0].edit);
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bio::io::fasta;
+    use std::io::{Cursor, Write};
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn parse_header_mapping_handles_multiple_delimiters() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "header\t taxid\tseqid").unwrap();
+        writeln!(file, "foo\t123\t456").unwrap();
+        writeln!(file, "bar\t789\t101112").unwrap();
+        file.flush().unwrap();
+
+        let map = parse_header_mapping(file.path().to_str().unwrap()).unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("foo"), Some(&(Gi(456), TaxId(123))));
+        assert_eq!(map.get("bar"), Some(&(Gi(101112), TaxId(789))));
+    }
+
+    #[test]
+    fn parse_fasta_db_with_mapping_skips_missing_when_requested() {
+        let fasta = ">foo\nACGT\n>bar\nTTTT\n";
+        let mut mapping = HeaderMap::new();
+        mapping.insert("foo".into(), (Gi(1), TaxId(2)));
+
+        let records = fasta::Reader::new(Cursor::new(fasta)).records();
+        let db = parse_fasta_db_with_mapping(records, &mapping, true).unwrap();
+
+        let sequences = db.get(&TaxId(2)).unwrap();
+        assert_eq!(sequences.len(), 1);
+        assert_eq!(sequences[0].0, Gi(1));
+        assert_eq!(sequences[0].1, b"ACGT".to_vec());
+        assert_eq!(db.len(), 1);
+    }
+
+    #[test]
+    fn parse_fasta_db_with_mapping_errors_for_missing_header() {
+        let fasta = ">foo\nACGT\n>bar\nTTTT\n";
+        let mut mapping = HeaderMap::new();
+        mapping.insert("foo".into(), (Gi(1), TaxId(2)));
+
+        let records = fasta::Reader::new(Cursor::new(fasta)).records();
+        assert!(parse_fasta_db_with_mapping(records, &mapping, false).is_err());
     }
 }
