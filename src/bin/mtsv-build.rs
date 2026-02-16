@@ -87,7 +87,7 @@ fn main() {
                 Ok(map) => Some(map),
                 Err(why) => {
                     error!("Error parsing mapping file: {}", why);
-                    return 1;
+                    std::process::exit(1);
                 },
             },
             None => None,
