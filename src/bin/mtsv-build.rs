@@ -109,11 +109,11 @@ fn main() {
             Ok(_) => {
                 info!("Done building and writing index!");
                 0
-            },
+            }
             Err(why) => {
                 error!("Error building index: {}", why);
                 1
-            },
+            }
         }
     };
 
