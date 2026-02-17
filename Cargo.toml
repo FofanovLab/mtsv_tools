@@ -1,6 +1,6 @@
 [package]
 name = "mtsv"
-version = "2.0.0"
+version = "2.1.0"
 authors = ["Tara Furstenau <tara.furstenau@gmail.com>"]
 description = "Metagenomic binning and analysis"
 edition = "2021"

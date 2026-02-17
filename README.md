@@ -1,4 +1,3 @@
-[![Build Status](https://travis-ci.com/FofanovLab/mtsv_tools.svg?branch=master)](https://travis-ci.com/FofanovLab/mtsv_tools)
 [![Bioconda](https://img.shields.io/conda/vn/bioconda/mtsv-tools.svg)](https://anaconda.org/bioconda/mtsv-tools)
 
 # mtsv-tools
@@ -125,29 +124,41 @@ Higher sampling intervals → smaller index, slower queries
 
 Using default settings, indices will be ~3.5x the size of the reference file and require about that much RAM to run the binning step. 
 
-##### Mapping reference sequence metadata during index build
-There are two approaches for mapping sequences to taxid.  
-Fasta headers can preformated as:
+##### Mapping reference sequence metadata during index construction
+`mtsv-build` requires a mapping between each reference sequence and an NCBI TaxID. This can be provided in one of two ways:
 
+**Option 1:** Encode TaxID directly in the FASTA header (Default Behavior)
 ```
-SEQID-TAXID
+>SEQID-TAXID
 ``` 
-For example, if a sequence has a unique identifier 12345 and belongs to NCBI TaxID 987, the header should be:
+Example:
 ```
 >12345-987
 ```
+Where:
+12345 → internal sequence identifier (seqid)
+987 → NCBI TaxID
 
-Or an optional header mapping file may be provided:
+**Option 2:** Provide an external mapping file
+If your FASTA headers do not follow the SEQID-TAXID convention, you may supply a mapping file using:
+`--mapping /path/to/map.tsv`
 
-If your FASTA headers do not follow the default `SEQID-TAXID` format, you can provide a mapping file with a header row containing `header`, `taxid`, and `seqid` columns. The parser is delimiter-agnostic (comma, tab, or whitespace). The `header` value should match the FASTA ID (not the description).
+The mapping file must:
+- Contain a header row.
+- Include the following columns:
+    - header — FASTA ID (must match exactly the first token of the FASTA header)
+    - taxid — NCBI TaxID
+    - seqid — Internal sequence identifier
 
+The parser is delimiter-agnostic (comma, tab, or whitespace).
+
+Example:
 ```
 header,taxid,seqid
 NC_000913.3,562,1038924
 NC_002695.2,83333,1038925
 ```
-
-Use `--mapping /path/to/map.tsv` to enable the override. If a FASTA ID is missing from the mapping file, mtsv-build will error by default; use `--skip-missing` to warn and skip those records instead.
+If a FASTA ID is missing from the mapping file, mtsv-build will error by default; use `--skip-missing` to warn and skip those records instead.
 
 ```
 Index construction for mtsv metagenomic and metatranscriptomic assignment tool.
@@ -183,7 +194,7 @@ Performs taxonomic assignment using q-gram filtering followed by SIMD-accelerate
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `--seed-size`     | Length of k-mers used during initial seed-based exact-match filtering. Larger values increase specificity; smaller values increase sensitivity. |
 | `--seed-interval` | Spacing between extracted seeds. Smaller intervals increase sensitivity but generate more index queries.                             |
-| `--min-seed`      | Minimum fraction of seeds that must match in a candidate region before triggering alignment. Controls filtering stringency. Implemented as $\text{floor}(\text{min\_seed} \times  \text{n\_seeds})$ where $\text{n\_seeds} \approx \text{ceil}((\text{read\_length} - \text{seed\_size} + 1)/\text{seed\_interval})$|
+| `--min-seed`      | Minimum fraction of seeds that must match in a candidate region before triggering alignment. Controls filtering stringency. Implemented as $\lfloor \text{min\_seed} \times  \text{n\_seeds}\rfloor$ where $\text{n\_seeds} \approx \lceil(\text{read\_length} - \text{seed\_size} + 1)/\text{seed\_interval}\rceil$|
 | `--edit-rate`     | Maximum allowed edit proportion (normalized by read length) for a successful alignment.                                              |
 
 ##### Performance parameters
