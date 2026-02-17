@@ -194,7 +194,7 @@ Performs taxonomic assignment using q-gram filtering followed by SIMD-accelerate
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `--seed-size`     | Length of k-mers used during initial seed-based exact-match filtering. Larger values increase specificity; smaller values increase sensitivity. |
 | `--seed-interval` | Spacing between extracted seeds. Smaller intervals increase sensitivity but generate more index queries.                             |
-| `--min-seed`      | Minimum fraction of seeds that must match in a candidate region before triggering alignment. Controls filtering stringency. Implemented as $\lfloor \text{min\_seed} \times  \text{n\_seeds}\rfloor$ where $\text{n\_seeds} \approx \lceil(\text{read\_length} - \text{seed\_size} + 1)/\text{seed\_interval}\rceil$|
+| `--min-seed`      | Minimum fraction of seeds that must match in a candidate region before triggering alignment. Controls filtering stringency. Implemented as $\lfloor \mathrm{min\_seed} \times  \mathrm{n\_seeds}\rfloor$ where $\mathrm{n\_seeds} \approx \lceil(\mathrm{read\_length} - \mathrm{seed\_size} + 1)/\mathrm{seed\_interval}\rceil$|
 | `--edit-rate`     | Maximum allowed edit proportion (normalized by read length) for a successful alignment.                                              |
 
 ##### Performance parameters
