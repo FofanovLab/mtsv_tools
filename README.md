@@ -99,7 +99,7 @@ FLAGS:
     -V, --version    Prints version information
 
 OPTIONS:
-    -i, --input <INPUT>      Path(s) to vedro results files to collapse
+    -i, --input <INPUT>      Path(s) to assignment results files to collapse
     -o, --output <OUTPUT>    Folder path to write split outupt files to.
     -g, --gb <SIZE_GB>       Chunk size (in gigabytes). [default: 1.0]
 ```
