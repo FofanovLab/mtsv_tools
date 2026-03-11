@@ -9,7 +9,7 @@ extern crate mtsv;
 
 use bio::io::{fasta, fastq};
 use clap::{App, Arg};
-use flate2::read::GzDecoder;
+use flate2::read::MultiGzDecoder;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -337,7 +337,7 @@ fn open_maybe_gz(path: &str) -> Result<Box<dyn Read>, std::io::Error> {
     file.seek(SeekFrom::Start(0))?;
 
     if read_len == 2 && magic == [0x1f, 0x8b] {
-        let decoder = GzDecoder::new(file)?;
+        let decoder = MultiGzDecoder::new(file);
         Ok(Box::new(decoder))
     } else {
         Ok(Box::new(file))

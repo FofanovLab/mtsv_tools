@@ -12,7 +12,7 @@ use crate::io::from_file;
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
-use flate2::read::GzDecoder;
+use flate2::read::MultiGzDecoder;
 use std::path::Path;
 use std::process::exit;
 use std::time::Instant;
@@ -25,7 +25,7 @@ fn open_maybe_gz(path: &str) -> MtsvResult<Box<dyn Read + Send>> {
     file.seek(SeekFrom::Start(0))?;
 
     if read_len == 2 && magic == [0x1f, 0x8b] {
-        let decoder = GzDecoder::new(file).map_err(MtsvError::from)?;
+        let decoder = MultiGzDecoder::new(file);
         Ok(Box::new(decoder))
     } else {
         Ok(Box::new(file))
