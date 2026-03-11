@@ -25,7 +25,7 @@ fn open_maybe_gz(path: &str) -> MtsvResult<Box<dyn Read + Send>> {
     file.seek(SeekFrom::Start(0))?;
 
     if read_len == 2 && magic == [0x1f, 0x8b] {
-        let decoder = MultiGzDecoder::new(file);
+        let decoder = MultiGzDecoder::new(file)?;
         Ok(Box::new(decoder))
     } else {
         Ok(Box::new(file))
