@@ -723,6 +723,7 @@ pub fn write_taxa_report(report_path: &str, report: &CollapseReport) -> MtsvResu
     )?;
 
     let denom = report.total_reads.max(1) as f64;
+    const PCT_PRECISION: usize = 6;
     let mut entries: Vec<_> = report.stats.iter().collect();
     entries.sort_by_key(|(taxid, _)| taxid.0);
 
@@ -731,7 +732,7 @@ pub fn write_taxa_report(report_path: &str, report: &CollapseReport) -> MtsvResu
         let format_pct = |value: usize| (value as f64 / denom * 100.0);
         writeln!(
             writer,
-            "{}\t{}\t{:.2}\t{}\t{:.2}\t{}\t{:.2}\t{}\t{:.2}\t{}\t{:.2}",
+            "{}\t{}\t{:.p$}\t{}\t{:.p$}\t{}\t{:.p$}\t{}\t{:.p$}\t{}\t{:.p$}",
             taxid.0,
             stats.only_hit,
             format_pct(stats.only_hit),
@@ -743,6 +744,7 @@ pub fn write_taxa_report(report_path: &str, report: &CollapseReport) -> MtsvResu
             format_pct(stats.not_best),
             total,
             total as f64 / denom * 100.0,
+            p = PCT_PRECISION
         )?;
     }
 

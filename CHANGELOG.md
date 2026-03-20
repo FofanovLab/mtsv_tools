@@ -20,6 +20,7 @@
   * `last_index`
 * `mtsv-partition` now logs read/write failure context with read index and counters before exiting.
 * `mtsv-partition` now writes compressed output when `--matched` / `--unmatched` paths end with `.gz`.
+* `mtsv-collapse --report` now writes percentage columns with 6 decimal places (previously 2).
 
 ## [2.1.0] – 2026-02-16
 
@@ -51,4 +52,3 @@ Enabling downstream functional annotation lookup for metagenomic and metatranscr
 * New utility: `mtsv-reference` for reference management tasks.
 
 ---
-
