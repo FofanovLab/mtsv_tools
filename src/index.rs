@@ -10,12 +10,100 @@ use serde::{Serialize, Deserialize};
 use itertools::Itertools;
 use ssw::{IDENT_W_PENALTY_NO_N_MATCH, Profile};
 use std::cmp;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug};
 use std::hash::{Hash};
 use std::num::ParseIntError;
 use std::str;
+use std::time::Instant;
 use std::u32;
+
+/// Opt-in variable-length (adaptive) seeding parameters.
+#[derive(Clone, Copy, Debug)]
+pub struct AdaptiveSeedingConfig {
+    /// Shortest seed used to rescue an initial seed with no exact hits.
+    pub min_seed_length: usize,
+    /// Longest seed used to reduce hits from a repetitive initial seed.
+    pub max_seed_length: usize,
+    /// Desired upper bound on occurrences before a seed is lengthened.
+    pub target_hits: usize,
+    /// Bases added or removed for each adaptive probe.
+    pub length_step: usize,
+}
+
+/// Per-orientation measurements collected during a query. Durations are microseconds so the
+/// structure can be serialized without floating-point rounding concerns.
+#[derive(Clone, Debug, Default)]
+pub struct SearchStats {
+    /// Seed start positions examined.
+    pub seeds_considered: usize,
+    /// Seed start positions actually queried after interval-based skipping.
+    pub seed_positions_queried: usize,
+    /// FM-index searches, including adaptive retries.
+    pub fm_queries: usize,
+    /// Final seed searches with one or more exact hits.
+    pub seeds_with_hits: usize,
+    /// Seeds excluded because their occurrence count exceeded `max_hits`.
+    pub seeds_skipped_max_hits: usize,
+    /// Suffix-array occurrences expanded into seed hits.
+    pub seed_occurrences: usize,
+    /// Sum of final selected seed lengths.
+    pub selected_seed_length_sum: usize,
+    /// Smallest final selected seed length.
+    pub selected_seed_length_min: usize,
+    /// Largest final selected seed length.
+    pub selected_seed_length_max: usize,
+    /// Candidate regions surviving coalescing and minimum-seed filtering.
+    pub candidates_generated: usize,
+    /// Candidate regions visited before configured limits stopped the search.
+    pub candidates_checked: usize,
+    /// Candidates skipped after the same taxon had already matched.
+    pub candidates_skipped_taxid: usize,
+    /// SIMD Smith-Waterman filter evaluations.
+    pub sw_checks: usize,
+    /// Full edit-distance evaluations after passing the SIMD filter.
+    pub edit_checks: usize,
+    /// Successful assignments for this orientation.
+    pub matches: usize,
+    /// Distinct taxids with at least one successful alignment.
+    pub distinct_taxids_matched: usize,
+    /// Microseconds spent searching seeds and expanding occurrences.
+    pub seed_us: u64,
+    /// Microseconds spent coalescing and sorting candidates.
+    pub coalesce_us: u64,
+    /// Microseconds spent filtering and aligning candidates.
+    pub alignment_us: u64,
+    /// Total search time in microseconds for this orientation.
+    pub total_us: u64,
+}
+
+/// Query assignments together with benchmark measurements.
+pub struct SearchResult {
+    /// Successful reference assignments.
+    pub hits: Vec<Hit>,
+    /// Measurements collected during the query.
+    pub stats: SearchStats,
+}
+
+fn elapsed_us(start: Instant) -> u64 {
+    let micros = start.elapsed().as_micros();
+    if micros > u64::MAX as u128 { u64::MAX } else { micros as u64 }
+}
+
+fn complete_interval_size(interval: &BackwardSearchResult) -> usize {
+    match *interval {
+        BackwardSearchResult::Complete(ref sai) => sai.upper - sai.lower,
+        _ => 0,
+    }
+}
+
+fn taxid_alignment_limit_reached(
+    successes: &HashMap<TaxId, usize>,
+    taxid: TaxId,
+    limit: usize,
+) -> bool {
+    successes.get(&taxid).cloned().unwrap_or(0) >= limit
+}
 
 /// Tuple struct to ensure GI/accession numbers don't get accidentally handled as tax IDs.
 #[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize, Debug)]
@@ -27,6 +115,7 @@ pub struct Gi(pub u32);
 
 
 /// Records a hit and the edit distance. 
+#[derive(Clone, Debug)]
 pub struct Hit {
     /// The taxid of the hit (TaxId)
     pub tax_id: TaxId,
@@ -267,6 +356,29 @@ impl MGIndex {
                             max_candidates_checked: Option<usize>,
                             max_hits_found: Option<usize>)
                             -> Vec<Hit> {
+        self.matching_tax_ids_with_stats(
+            fmindex, sequence, edit_freq, seed_length, seed_gap, min_seeds_percent,
+            max_hits, tune_max_hits, max_candidates_checked, max_hits_found, 1, None).hits
+    }
+
+    /// Query with optional adaptive seeding and return detailed benchmark measurements.
+    pub fn matching_tax_ids_with_stats(&self,
+                            fmindex: &FMIndex<&BWT, &Less, &Occ>,
+                            sequence: &[u8],
+                            edit_freq: f64,
+                            seed_length: usize,
+                            seed_gap: usize,
+                            min_seeds_percent: f64,
+                            max_hits: usize,
+                            tune_max_hits: usize,
+                            max_candidates_checked: Option<usize>,
+                            max_hits_found: Option<usize>,
+                            max_alignments_per_taxid: usize,
+                            adaptive: Option<AdaptiveSeedingConfig>)
+                            -> SearchResult {
+
+        let total_timer = Instant::now();
+        let mut stats = SearchStats::default();
 
         // we need to later compare for edit distance where N's won't match against reference N's
         let seq_no_n = sequence.iter()
@@ -281,28 +393,85 @@ impl MGIndex {
         let seq_len = sequence.len() as f64;
         let edit_distance = (seq_len * edit_freq).ceil() as usize;
 
-        let seeds = (0..(sequence.len() + 1 - seed_length)) // get all seed start indices
-            .step(seed_gap)                                 // skip over any in between seed gap
-            .map(|i| (i, &sequence[i..i + seed_length]));   // create a reference into the query
-        
-
         // find all of the reference regions which we'll align against
         let reference_candidates = {
+            let seed_timer = Instant::now();
             let mut bin_locations = Vec::new();
 
             let mut n_seeds = 0.0;
             let mut next_offset = 0;
             let mut seed_interval = seed_gap;
-            for (offset, seed) in seeds {
+            let shortest_seed = adaptive.map(|a| a.min_seed_length).unwrap_or(seed_length);
+            let seed_end = sequence.len().checked_add(1)
+                .and_then(|n| n.checked_sub(shortest_seed))
+                .unwrap_or(0);
+            for offset in (0..seed_end).step(seed_gap) {
+                stats.seeds_considered += 1;
                 // if end of this seeds does not extend past end
                 // of last seed (due to seed expansion for high hit counts),
                 // skip this seed.
                 if offset < next_offset {
                     continue;
                 }
+                stats.seed_positions_queried += 1;
                 
-                // find everywhere this seed occurs in the reference database
-                let interval = fmindex.backward_search(seed.iter());
+                let mut chosen_length = seed_length.min(sequence.len() - offset);
+                let mut interval = fmindex.backward_search(
+                    sequence[offset..offset + chosen_length].iter());
+                stats.fm_queries += 1;
+
+                if let Some(config) = adaptive {
+                    // Lengthen common seeds to reduce occurrence expansion. If the initial seed
+                    // has no exact match, shorten it to recover sensitivity around read errors.
+                    let initial_hits = complete_interval_size(&interval);
+                    if initial_hits > config.target_hits {
+                        let mut last_nonzero_length = chosen_length;
+                        while complete_interval_size(&interval) > config.target_hits &&
+                              chosen_length < config.max_seed_length {
+                            let next_length = (chosen_length + config.length_step)
+                                .min(config.max_seed_length)
+                                .min(sequence.len() - offset);
+                            if next_length == chosen_length {
+                                break;
+                            }
+                            chosen_length = next_length;
+                            interval = fmindex.backward_search(
+                                sequence[offset..offset + chosen_length].iter());
+                            stats.fm_queries += 1;
+                            if complete_interval_size(&interval) > 0 {
+                                last_nonzero_length = chosen_length;
+                            }
+                        }
+                        // Do not lose a valid common seed merely because extension crossed an
+                        // error or variant in the read.
+                        if complete_interval_size(&interval) == 0 {
+                            chosen_length = last_nonzero_length;
+                            interval = fmindex.backward_search(
+                                sequence[offset..offset + chosen_length].iter());
+                            stats.fm_queries += 1;
+                        }
+                    } else if initial_hits == 0 {
+                        while complete_interval_size(&interval) == 0 &&
+                              chosen_length > config.min_seed_length {
+                            let next_length = chosen_length.saturating_sub(config.length_step)
+                                .max(config.min_seed_length);
+                            if next_length == chosen_length {
+                                break;
+                            }
+                            chosen_length = next_length;
+                            interval = fmindex.backward_search(
+                                sequence[offset..offset + chosen_length].iter());
+                            stats.fm_queries += 1;
+                        }
+                    }
+                }
+                stats.selected_seed_length_sum += chosen_length;
+                if stats.selected_seed_length_min == 0 ||
+                   chosen_length < stats.selected_seed_length_min {
+                    stats.selected_seed_length_min = chosen_length;
+                }
+                stats.selected_seed_length_max =
+                    stats.selected_seed_length_max.max(chosen_length);
                 // there are a few seeds which are SO prevalent they'll blow up memory usage if we don't
                 // filter them out. in practice they have little impact on quality of results
                 // if this seed is greater than max_hits, just skip it
@@ -331,8 +500,10 @@ impl MGIndex {
                     continue;
                 }
                 let n_hits = interval_upper - interval_lower;
+                stats.seeds_with_hits += 1;
                 // if too many seed hits were found, skip
                 if n_hits > max_hits {
+                    stats.seeds_skipped_max_hits += 1;
                     continue;
                 }
                 if n_hits > tune_max_hits{
@@ -350,6 +521,7 @@ impl MGIndex {
                         query_offset: offset,
                     }
                 }));
+                stats.seed_occurrences += n_hits;
 
                 n_seeds += 1.0;
                 }
@@ -358,7 +530,10 @@ impl MGIndex {
             let min_seeds = (n_seeds * min_seeds_percent).floor().max(1.0) as usize;
        
 
+            stats.seed_us = elapsed_us(seed_timer);
+
             // merge all of the seed hits into candidate regions we can align against
+            let coalesce_timer = Instant::now();
             let mut refs =
                 self.coalesce_seed_sites(&mut bin_locations,
                                          min_seeds,
@@ -367,12 +542,15 @@ impl MGIndex {
 
             // sort in reverse by number of seeds -- check the most promising locations first
             refs.sort_by(|a, b| b.num_seeds.cmp(&a.num_seeds));
+            stats.coalesce_us = elapsed_us(coalesce_timer);
+            stats.candidates_generated = refs.len();
 
             refs
         };
 
 
-        let mut matches = Vec::new();
+        let alignment_timer = Instant::now();
+        let mut matches: HashMap<TaxId, usize> = HashMap::new();
         let mut hits = Vec::new();
 
         let mut aligner = Aligner::new();
@@ -388,9 +566,12 @@ impl MGIndex {
                 }
             }
             candidates_checked += 1;
+            stats.candidates_checked += 1;
             // see if we've already found this tax ID
 
-            if let Some(_) = matches.iter().find(|&&t| t == candidate.bin.tax_id) {
+            if taxid_alignment_limit_reached(
+                &matches, candidate.bin.tax_id, max_alignments_per_taxid) {
+                stats.candidates_skipped_taxid += 1;
                 // n_skip += 1;
                 continue;
             }
@@ -399,6 +580,7 @@ impl MGIndex {
             // if there is, record the hit tax id and then advance to the next candidate
 
             let cand_seq = candidate.candidate_seq();
+            stats.sw_checks += 1;
             let score = profile.align_score(cand_seq, 1, 1);
 
             // -1 for substitution, -1 for gap open, -1 for gap extend
@@ -406,9 +588,11 @@ impl MGIndex {
             if score as usize >= sequence.len() - (edit_distance * 2) {
                 // the SW check is faster (w/ SIMD) than the min_edit_distance check, so if we're
                 // within an acceptable tolerance, now do the expensive check
+                stats.edit_checks += 1;
                 let edits = aligner.min_edit_distance(&seq_no_n, cand_seq);
                 if edits as usize <= edit_distance {
-                    matches.push(candidate.bin.tax_id);
+                    let count = matches.entry(candidate.bin.tax_id).or_insert(0);
+                    *count += 1;
 
                     let hit = Hit {
                         tax_id: candidate.bin.tax_id,
@@ -419,7 +603,9 @@ impl MGIndex {
                     
                     hits.push(hit);
                     if let Some(limit) = max_hits_found {
-                        if hits.len() >= limit {
+                        // This limit remains a count of distinct assigned taxids. Multiple
+                        // successful loci for one taxid do not consume it.
+                        if matches.len() >= limit {
                             break;
                         }
                     }
@@ -428,7 +614,11 @@ impl MGIndex {
         }
         // println!("Skipped Candidates: {0}/{1}", n_skip, n_refs);
 
-        hits
+        stats.matches = hits.len();
+        stats.distinct_taxids_matched = matches.len();
+        stats.alignment_us = elapsed_us(alignment_timer);
+        stats.total_us = elapsed_us(total_timer);
+        SearchResult { hits: hits, stats: stats }
     }
 
     /// Combine a series of `SeedHit`s into a series of `ReferenceCandidate`s.
@@ -644,6 +834,17 @@ pub fn random_database(num_taxa: u16,
 #[cfg(test)]
 mod test {
     use std::collections::BTreeMap;
+
+    #[test]
+    fn successful_alignment_limit_is_per_taxid() {
+        let mut successes = HashMap::new();
+        successes.insert(TaxId(10), 2);
+        successes.insert(TaxId(20), 1);
+
+        assert!(taxid_alignment_limit_reached(&successes, TaxId(10), 2));
+        assert!(!taxid_alignment_limit_reached(&successes, TaxId(20), 2));
+        assert!(!taxid_alignment_limit_reached(&successes, TaxId(30), 2));
+    }
     use super::*;
     use super::{Bin, ReferenceCandidate, SeedHit};
 

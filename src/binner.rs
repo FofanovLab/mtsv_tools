@@ -7,7 +7,7 @@ use cue::pipeline;
 use bio::data_structures::fmindex::{FMIndex};
 
 use crate::error::*;
-use crate::index::{MGIndex, TaxId, Hit, Gi};
+use crate::index::{AdaptiveSeedingConfig, MGIndex, SearchStats, TaxId, Hit, Gi};
 use crate::io::from_file;
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
@@ -17,6 +17,20 @@ use std::path::Path;
 use std::process::exit;
 use std::time::Instant;
 use std::fmt::Write as FmtWrite; // for write!(String, ...)
+
+/// Assignment output representation. Existing legacy formats remain unchanged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AssignmentOutputFormat {
+    /// `read_id:taxid=edit,...`
+    Default,
+    /// `read_id:taxid-gi-position=edit,...`
+    Long,
+    /// Headered TSV with compact semicolon-separated alignment columns.
+    Table,
+}
+
+const TABLE_HEADER: &[u8] =
+    b"read_id\tread_length\ttaxa\tGID\tposition\tedit_distance\n";
 
 fn open_maybe_gz(path: &str) -> MtsvResult<Box<dyn Read + Send>> {
     let mut file = File::open(Path::new(path))?;
@@ -32,6 +46,41 @@ fn open_maybe_gz(path: &str) -> MtsvResult<Box<dyn Read + Send>> {
     }
 }
 
+fn elapsed_us(start: Instant) -> u64 {
+    let micros = start.elapsed().as_micros();
+    if micros > u64::MAX as u128 { u64::MAX } else { micros as u64 }
+}
+
+fn write_debug_header<W: Write>(writer: &mut W) -> MtsvResult<()> {
+    writer.write_all(b"read_id\torientation\tread_total_us\tsearch_total_us\tseed_us\tcoalesce_us\talignment_us\tseeds_considered\tseed_positions_queried\tfm_queries\tseeds_with_hits\tseeds_skipped_max_hits\tseed_occurrences\tselected_seed_length_mean\tselected_seed_length_min\tselected_seed_length_max\tcandidates_generated\tcandidates_checked\tcandidates_skipped_taxid\tsw_checks\tedit_checks\tsuccessful_alignments\tdistinct_taxids_matched\n")?;
+    Ok(())
+}
+
+fn write_debug_stats<W: Write>(
+    read_id: &str,
+    orientation: &str,
+    read_total_us: u64,
+    stats: &SearchStats,
+    writer: &mut W,
+) -> MtsvResult<()> {
+    let safe_id = read_id.replace('\t', " ").replace('\n', " ").replace('\r', " ");
+    let mean_length = if stats.seed_positions_queried == 0 {
+        0.0
+    } else {
+        stats.selected_seed_length_sum as f64 / stats.seed_positions_queried as f64
+    };
+    writeln!(writer,
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        safe_id, orientation, read_total_us, stats.total_us, stats.seed_us,
+        stats.coalesce_us, stats.alignment_us, stats.seeds_considered,
+        stats.seed_positions_queried, stats.fm_queries,
+        stats.seeds_with_hits, stats.seeds_skipped_max_hits, stats.seed_occurrences,
+        mean_length, stats.selected_seed_length_min, stats.selected_seed_length_max,
+        stats.candidates_generated, stats.candidates_checked, stats.candidates_skipped_taxid,
+        stats.sw_checks, stats.edit_checks, stats.matches, stats.distinct_taxids_matched)?;
+    Ok(())
+}
+
 fn run_fastx_pipeline<I>(
     records: I,
     index_path: &str,
@@ -45,12 +94,19 @@ fn run_fastx_pipeline<I>(
     max_hits: usize,
     tune_max_hits: usize,
     max_assignments: Option<usize>,
+    max_alignments_per_taxid: usize,
     max_candidates_checked: Option<usize>,
-    long_info_output: bool,
+    output_format: AssignmentOutputFormat,
+    adaptive_seeding: Option<AdaptiveSeedingConfig>,
+    debug_stats_path: Option<&str>,
 ) -> MtsvResult<()>
 where
     I: Iterator<Item = MtsvResult<FastxRecord>>,
 {
+    let table_needs_header = output_format == AssignmentOutputFormat::Table &&
+        (!append_results || std::fs::metadata(Path::new(results_path))
+            .map(|metadata| metadata.len() == 0)
+            .unwrap_or(true));
     let output_file = if append_results {
         std::fs::OpenOptions::new()
             .create(true)
@@ -67,6 +123,17 @@ where
         filter.suffix_array.occ());
 
     let mut result_writer = BufWriter::new(output_file);
+    if table_needs_header {
+        result_writer.write_all(TABLE_HEADER)?;
+    }
+    let mut debug_writer = match debug_stats_path {
+        Some(path) => {
+            let mut writer = BufWriter::new(File::create(Path::new(path))?);
+            write_debug_header(&mut writer)?;
+            Some(writer)
+        },
+        None => None,
+    };
 
     info!("Beginning queries.");
     let timer = Instant::now();
@@ -75,6 +142,8 @@ where
              num_threads,
              records,
              |record| {
+
+        let read_timer = Instant::now();
 
         let record = match record {
             Ok(r) => r,
@@ -99,7 +168,7 @@ where
             })
             .collect::<Vec<u8>>();
 
-        let hits = filter.matching_tax_ids(
+        let forward = filter.matching_tax_ids_with_stats(
                                         &fmindex,
                                         &seq_all_caps,
                                         edit_distance,
@@ -109,11 +178,13 @@ where
                                         max_hits,
                                         tune_max_hits,
                                         max_candidates_checked,
-                                        max_assignments);
+                                        max_assignments,
+                                        max_alignments_per_taxid,
+                                        adaptive_seeding);
 
         // get the reverse complement
         let rev_comp_seq = revcomp(&seq_all_caps);
-        let rev_hits = filter.matching_tax_ids(
+        let reverse = filter.matching_tax_ids_with_stats(
                                         &fmindex,
                                         &rev_comp_seq,
                                         edit_distance,
@@ -123,20 +194,35 @@ where
                                         max_hits,
                                         tune_max_hits,
                                         max_candidates_checked,
-                                        max_assignments);
+                                        max_assignments,
+                                        max_alignments_per_taxid,
+                                        adaptive_seeding);
 
-        let edit_distances: Vec<Hit> = hits.into_iter().chain(rev_hits.into_iter()).collect();
+        let edit_distances: Vec<Hit> = forward.hits.into_iter()
+            .chain(reverse.hits.into_iter()).collect();
+        let read_us = elapsed_us(read_timer);
 
-        (record.id().to_owned(), edit_distances)
+        (record.id().to_owned(), seq_all_caps.len(), edit_distances,
+         forward.stats, reverse.stats, read_us)
     },
-             |(header, edit_distances)| {
+             |(header, read_length, edit_distances, forward_stats, reverse_stats, read_us)| {
 
-        match write_assignments(&header, &edit_distances, &mut result_writer, long_info_output) {
+        match write_assignments_with_format(
+            &header, read_length, &edit_distances, &mut result_writer, output_format) {
             Ok(_) => (),
             Err(why) => {
                 error!("Error writing to result file ({})", why);
                 exit(11);
             },
+        }
+        if let Some(ref mut writer) = debug_writer {
+            if let Err(why) = write_debug_stats(
+                &header, "forward", read_us, &forward_stats, writer)
+                .and_then(|_| write_debug_stats(
+                    &header, "reverse", read_us, &reverse_stats, writer)) {
+                error!("Error writing debug statistics ({})", why);
+                exit(11);
+            }
         }
     });
 
@@ -146,7 +232,7 @@ where
 }
 
 /// Execute metagenomic binning queries in parallel for FASTA or FASTQ inputs.
-pub fn get_fastx_and_write_matching_bin_ids(input_path: &str,
+pub fn get_fastx_and_write_matching_bin_ids_with_output_format(input_path: &str,
                                             input_type: &str,
                                             index_path: &str,
                                             results_path: &str,
@@ -159,9 +245,12 @@ pub fn get_fastx_and_write_matching_bin_ids(input_path: &str,
                                             max_hits: usize,
                                             tune_max_hits: usize,
                                             max_assignments: Option<usize>,
+                                            max_alignments_per_taxid: usize,
                                             max_candidates_checked: Option<usize>,
                                             read_offset: usize,
-                                            long_info_output: bool)
+                                            output_format: AssignmentOutputFormat,
+                                            adaptive_seeding: Option<AdaptiveSeedingConfig>,
+                                            debug_stats_path: Option<&str>)
                                             -> MtsvResult<()> {
 
     let input_type = input_type.to_ascii_uppercase();
@@ -186,8 +275,11 @@ pub fn get_fastx_and_write_matching_bin_ids(input_path: &str,
                            max_hits,
                            tune_max_hits,
                            max_assignments,
+                           max_alignments_per_taxid,
                            max_candidates_checked,
-                           long_info_output)
+                           output_format,
+                           adaptive_seeding,
+                           debug_stats_path)
     } else if input_type == "FASTQ" {
         let mut reader = fastq::Reader::new(open_maybe_gz(input_path)?);
         reader.records().next().unwrap()?;
@@ -209,11 +301,47 @@ pub fn get_fastx_and_write_matching_bin_ids(input_path: &str,
                            max_hits,
                            tune_max_hits,
                            max_assignments,
+                           max_alignments_per_taxid,
                            max_candidates_checked,
-                           long_info_output)
+                           output_format,
+                           adaptive_seeding,
+                           debug_stats_path)
     } else {
         Err(MtsvError::InvalidHeader(format!("Unknown input type: {}", input_type)))
     }
+}
+
+/// Backward-compatible entry point for the established default/long boolean output selection.
+pub fn get_fastx_and_write_matching_bin_ids(input_path: &str,
+                                            input_type: &str,
+                                            index_path: &str,
+                                            results_path: &str,
+                                            append_results: bool,
+                                            num_threads: usize,
+                                            edit_distance: f64,
+                                            seed_size: usize,
+                                            seed_gap: usize,
+                                            min_seeds: f64,
+                                            max_hits: usize,
+                                            tune_max_hits: usize,
+                                            max_assignments: Option<usize>,
+                                            max_alignments_per_taxid: usize,
+                                            max_candidates_checked: Option<usize>,
+                                            read_offset: usize,
+                                            long_info_output: bool,
+                                            adaptive_seeding: Option<AdaptiveSeedingConfig>,
+                                            debug_stats_path: Option<&str>)
+                                            -> MtsvResult<()> {
+    let output_format = if long_info_output {
+        AssignmentOutputFormat::Long
+    } else {
+        AssignmentOutputFormat::Default
+    };
+    get_fastx_and_write_matching_bin_ids_with_output_format(
+        input_path, input_type, index_path, results_path, append_results, num_threads,
+        edit_distance, seed_size, seed_gap, min_seeds, max_hits, tune_max_hits,
+        max_assignments, max_alignments_per_taxid, max_candidates_checked, read_offset,
+        output_format, adaptive_seeding, debug_stats_path)
 }
 
 enum FastxRecord {
@@ -313,11 +441,28 @@ pub fn write_assignments<W: Write>(
     writer: &mut W,
     long_info_output: bool,
 ) -> MtsvResult<()> {
+    let format = if long_info_output {
+        AssignmentOutputFormat::Long
+    } else {
+        AssignmentOutputFormat::Default
+    };
+    write_assignments_with_format(header, 0, hits, writer, format)
+}
+
+/// Write assignments in a selected format. The table representation includes `read_length`;
+/// legacy representations intentionally ignore it to remain byte-for-byte compatible.
+pub fn write_assignments_with_format<W: Write>(
+    header: &str,
+    read_length: usize,
+    hits: &[Hit],
+    writer: &mut W,
+    output_format: AssignmentOutputFormat,
+) -> MtsvResult<()> {
     if hits.is_empty() {
         return Ok(());
     }
 
-    if long_info_output {
+    if output_format == AssignmentOutputFormat::Long {
         // keep smallest edit per (taxid, gi, offset)
         let mut best: HashMap<(TaxId, Gi, usize), u32> = HashMap::new();
         for h in hits {
@@ -349,6 +494,46 @@ pub fn write_assignments<W: Write>(
         line.push('\n');
 
         writer.write_all(line.as_bytes())?;
+        return Ok(());
+    }
+
+    if output_format == AssignmentOutputFormat::Table {
+        // Parallel semicolon-separated lists keep the TSV compact while preserving the
+        // taxid/GID/position/edit relationship at each list index.
+        let mut best: HashMap<(TaxId, Gi, usize), u32> = HashMap::new();
+        for h in hits {
+            let key = (h.tax_id, h.gi, h.offset);
+            best.entry(key)
+                .and_modify(|e| { if h.edit < *e { *e = h.edit; } })
+                .or_insert(h.edit);
+        }
+        let mut items: Vec<((TaxId, Gi, usize), u32)> = best.into_iter().collect();
+        items.sort_by(|a, b| {
+            a.0.0.cmp(&b.0.0)
+                .then(a.0.1.cmp(&b.0.1))
+                .then(a.0.2.cmp(&b.0.2))
+                .then(a.1.cmp(&b.1))
+        });
+
+        let safe_header = header.replace('\t', " ").replace('\n', " ").replace('\r', " ");
+        let mut taxa = String::new();
+        let mut gids = String::new();
+        let mut positions = String::new();
+        let mut edits = String::new();
+        for (idx, ((taxid, gi, position), edit)) in items.into_iter().enumerate() {
+            if idx > 0 {
+                taxa.push(';');
+                gids.push(';');
+                positions.push(';');
+                edits.push(';');
+            }
+            let _ = write!(taxa, "{}", taxid.0);
+            let _ = write!(gids, "{}", gi.0);
+            let _ = write!(positions, "{}", position);
+            let _ = write!(edits, "{}", edit);
+        }
+        writeln!(writer, "{}\t{}\t{}\t{}\t{}\t{}",
+                 safe_header, read_length, taxa, gids, positions, edits)?;
         return Ok(());
     }
 
@@ -399,6 +584,28 @@ mod test {
         let found = String::from_utf8(buf).unwrap();
 
         assert_eq!(expected, &found);
+    }
+
+    #[test]
+    fn debug_stats_are_tabular_and_sanitize_read_ids() {
+        let mut buf = Vec::new();
+        write_debug_header(&mut buf).unwrap();
+        let mut stats = SearchStats::default();
+        stats.seeds_considered = 2;
+        stats.seed_positions_queried = 2;
+        stats.selected_seed_length_sum = 40;
+        stats.selected_seed_length_min = 18;
+        stats.selected_seed_length_max = 22;
+        stats.seed_occurrences = 7;
+        stats.candidates_generated = 3;
+        write_debug_stats("read\t1", "forward", 100, &stats, &mut buf).unwrap();
+
+        let output = String::from_utf8(buf).unwrap();
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(2, lines.len());
+        assert_eq!(lines[0].split('\t').count(), lines[1].split('\t').count());
+        assert!(lines[1].starts_with("read 1\tforward\t100\t"));
+        assert!(lines[1].contains("\t20.000\t18\t22\t3\t"));
     }
 
 
@@ -469,6 +676,21 @@ mod test {
 
         let expected = "R1_1_0_0:2-10-3=4,2-11-8=6,5-12-1=9\n";
         assert_eq!(expected, &found);
+    }
+
+    #[test]
+    fn assignments_table_output_uses_parallel_compact_lists() {
+        let hits = vec![
+            Hit { tax_id: TaxId(5), gi: Gi(12), offset: 8, edit: 3 },
+            Hit { tax_id: TaxId(2), gi: Gi(10), offset: 4, edit: 7 },
+            Hit { tax_id: TaxId(2), gi: Gi(10), offset: 4, edit: 2 },
+        ];
+        let mut buf = Vec::new();
+        write_assignments_with_format(
+            "read1", 151, &hits, &mut buf, AssignmentOutputFormat::Table).unwrap();
+        assert_eq!(
+            "read1\t151\t2;5\t10;12\t4;8\t2;3\n",
+            String::from_utf8(buf).unwrap());
     }
 
     #[test]

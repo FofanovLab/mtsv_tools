@@ -9,6 +9,7 @@ extern crate mtsv;
 use clap::{App, Arg};
 use flate2::read::MultiGzDecoder;
 use mtsv::util;
+use mtsv::io::result_read_id;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -37,13 +38,9 @@ fn read_ids_from_results(path: &str) -> Result<HashSet<String>, String> {
         if line.trim().is_empty() {
             continue;
         }
-        let mut halves = line.rsplitn(2, ':');
-        let _hits = halves.next().unwrap_or("");
-        let read_id = halves.next().ok_or_else(|| "Missing read id".to_string())?;
-        if read_id.is_empty() {
-            return Err("Missing read id".to_string());
+        if let Some(read_id) = result_read_id(&line).map_err(|e| e.to_string())? {
+            ids.insert(read_id.to_string());
         }
-        ids.insert(read_id.to_string());
     }
     Ok(ids)
 }

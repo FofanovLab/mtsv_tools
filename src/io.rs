@@ -15,6 +15,149 @@ use crate::util::parse_read_header;
 /// Mapping of FASTA headers to (GI, TaxId).
 pub type HeaderMap = HashMap<String, (Gi, TaxId)>;
 
+/// Parsed assignment record from either a legacy colon line or the headered table format.
+#[derive(Debug)]
+pub struct ResultRecord {
+    /// Read identifier.
+    pub read_id: String,
+    /// Read length when supplied by table output.
+    pub read_length: Option<usize>,
+    /// Alignment assignments. Legacy default records use zero for unavailable GID/position.
+    pub hits: Vec<Hit>,
+}
+
+/// Return whether a line is the table-format header.
+pub fn is_table_result_header(line: &str) -> bool {
+    line.trim_end_matches(&['\n', '\r'][..]) ==
+        "read_id\tread_length\ttaxa\tGID\tposition\tedit_distance"
+}
+
+/// Return whether a line has the unambiguous six-column table shape.
+pub fn is_table_result_line(line: &str) -> bool {
+    let line = line.trim_end_matches(&['\n', '\r'][..]);
+    if is_table_result_header(line) {
+        return true;
+    }
+    let fields: Vec<&str> = line.split('\t').collect();
+    fields.len() == 6 && fields[1].parse::<usize>().is_ok()
+}
+
+/// Extract a read ID from any supported result line. A table header returns `None`.
+pub fn result_read_id(line: &str) -> MtsvResult<Option<&str>> {
+    let line = line.trim_end_matches(&['\n', '\r'][..]);
+    if is_table_result_header(line) {
+        return Ok(None);
+    }
+    if is_table_result_line(line) {
+        let read_id = line.split('\t').next().unwrap_or("");
+        if read_id.is_empty() {
+            return Err(MtsvError::InvalidHeader(line.to_string()));
+        }
+        return Ok(Some(read_id));
+    }
+    let mut halves = line.rsplitn(2, ':');
+    let _hits = halves.next().unwrap_or("");
+    let read_id = halves.next()
+        .ok_or_else(|| MtsvError::InvalidHeader(line.to_string()))?;
+    if read_id.is_empty() {
+        return Err(MtsvError::InvalidHeader(line.to_string()));
+    }
+    Ok(Some(read_id))
+}
+
+fn parse_legacy_hit(token: &str) -> MtsvResult<Hit> {
+    let mut assignment = token.split('=');
+    let location = assignment.next().unwrap_or("");
+    let edit = match assignment.next() {
+        Some(value) => value.parse::<u32>()
+            .map_err(|_| MtsvError::InvalidInteger(value.to_string()))?,
+        None => 0,
+    };
+    if assignment.next().is_some() {
+        return Err(MtsvError::InvalidHeader(token.to_string()));
+    }
+    let mut location_parts = location.split('-');
+    let tax_raw = location_parts.next().unwrap_or("");
+    let tax_id = tax_raw.parse::<TaxId>()
+        .map_err(|_| MtsvError::InvalidInteger(tax_raw.to_string()))?;
+    let gi = match location_parts.next() {
+        Some(value) => value.parse::<Gi>()
+            .map_err(|_| MtsvError::InvalidInteger(value.to_string()))?,
+        None => Gi(0),
+    };
+    let offset = match location_parts.next() {
+        Some(value) => value.parse::<usize>()
+            .map_err(|_| MtsvError::InvalidInteger(value.to_string()))?,
+        None => 0,
+    };
+    if location_parts.next().is_some() {
+        return Err(MtsvError::InvalidHeader(token.to_string()));
+    }
+    Ok(Hit { tax_id, gi, offset, edit })
+}
+
+/// Parse one result line, automatically detecting table versus legacy syntax. Headers return
+/// `None`, allowing callers to consume mixed supported files without special casing the first row.
+pub fn parse_result_record(line: &str) -> MtsvResult<Option<ResultRecord>> {
+    let line = line.trim_end_matches(&['\n', '\r'][..]);
+    if line.is_empty() || is_table_result_header(line) {
+        return Ok(None);
+    }
+    if is_table_result_line(line) {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() != 6 || fields[0].is_empty() {
+            return Err(MtsvError::InvalidHeader(line.to_string()));
+        }
+        let read_length = fields[1].parse::<usize>()
+            .map_err(|_| MtsvError::InvalidInteger(fields[1].to_string()))?;
+        let taxa: Vec<&str> = if fields[2].is_empty() { Vec::new() } else { fields[2].split(';').collect() };
+        let gids: Vec<&str> = if fields[3].is_empty() { Vec::new() } else { fields[3].split(';').collect() };
+        let positions: Vec<&str> = if fields[4].is_empty() { Vec::new() } else { fields[4].split(';').collect() };
+        let edits: Vec<&str> = if fields[5].is_empty() { Vec::new() } else { fields[5].split(';').collect() };
+        if taxa.len() != gids.len() || taxa.len() != positions.len() || taxa.len() != edits.len() {
+            return Err(MtsvError::InvalidHeader(
+                "Table result columns contain different numbers of values".to_string()));
+        }
+        let mut hits = Vec::with_capacity(taxa.len());
+        for idx in 0..taxa.len() {
+            hits.push(Hit {
+                tax_id: taxa[idx].parse::<TaxId>()
+                    .map_err(|_| MtsvError::InvalidInteger(taxa[idx].to_string()))?,
+                gi: gids[idx].parse::<Gi>()
+                    .map_err(|_| MtsvError::InvalidInteger(gids[idx].to_string()))?,
+                offset: positions[idx].parse::<usize>()
+                    .map_err(|_| MtsvError::InvalidInteger(positions[idx].to_string()))?,
+                edit: edits[idx].parse::<u32>()
+                    .map_err(|_| MtsvError::InvalidInteger(edits[idx].to_string()))?,
+            });
+        }
+        return Ok(Some(ResultRecord {
+            read_id: fields[0].to_string(),
+            read_length: Some(read_length),
+            hits,
+        }));
+    }
+
+    let mut halves = line.rsplitn(2, ':');
+    let assignments = halves.next().unwrap_or("");
+    let read_id = halves.next()
+        .ok_or_else(|| MtsvError::InvalidHeader(line.to_string()))?;
+    if read_id.is_empty() {
+        return Err(MtsvError::InvalidHeader(line.to_string()));
+    }
+    let mut hits = Vec::new();
+    if !assignments.is_empty() {
+        for token in assignments.split(',') {
+            hits.push(parse_legacy_hit(token)?);
+        }
+    }
+    Ok(Some(ResultRecord {
+        read_id: read_id.to_string(),
+        read_length: None,
+        hits,
+    }))
+}
+
 fn detect_mapping_delimiter(line: &str) -> Option<char> {
     let candidates = [',', '\t', ';', '|'];
     for candidate in candidates.iter() {
@@ -193,44 +336,19 @@ pub fn parse_fasta_db_with_mapping<R>(
 pub fn parse_findings<'a, R: BufRead + 'a>
     (s: R)
      -> Box<dyn Iterator<Item = MtsvResult<(String, BTreeSet<TaxId>)>> + 'a> {
-    // TODO: replace with -> impl Trait when stabilized
-
-    // the BufRead::lines function handles lazily splitting on lines for us
-    Box::new(s.lines().map(|l| {
-        l.map_err(|e| MtsvError::from(e)).and_then(|l| {
-            let l = l.trim();
-            // split from the right in case someone put colons in the read ID
-            let mut halves = l.rsplitn(2, ':');
-
-            let mut hits = BTreeSet::new();
-
-            // the first split iteration will always return something, even if it's empty
-            let taxids = halves.next().unwrap().split(',');
-
-            // parse each taxid (comma separated), returning None if it fails
-            for taxid_raw in taxids {
-                let taxid = match taxid_raw.parse::<TaxId>() {
-                    Ok(id) => id,
-                    Err(_) => return Err(MtsvError::InvalidInteger(taxid_raw.to_string())),
-                };
-
-                hits.insert(taxid);
-            }
-
-            // since we're parsing from the right of each line, the read ID is the second token
-            let read_id = match halves.next() {
-                Some(r) => {
-                    if r.len() > 0 {
-                        r.to_string()
-                    } else {
-                        return Err(MtsvError::InvalidHeader(l.to_string()));
-                    }
-                },
-                None => return Err(MtsvError::InvalidHeader(l.to_string())),
-            };
-
-            Ok((read_id, hits))
-        })
+    Box::new(s.lines().filter_map(|line| {
+        let line = match line {
+            Ok(value) => value,
+            Err(err) => return Some(Err(MtsvError::from(err))),
+        };
+        match parse_result_record(&line) {
+            Ok(Some(record)) => {
+                let hits = record.hits.into_iter().map(|hit| hit.tax_id).collect();
+                Some(Ok((record.read_id, hits)))
+            },
+            Ok(None) => None,
+            Err(err) => Some(Err(err)),
+        }
     }))
 }
 
@@ -244,60 +362,16 @@ pub fn parse_findings<'a, R: BufRead + 'a>
 pub fn parse_edit_distance_findings<'a, R: BufRead + 'a>
     (s: R)
      -> Box<dyn Iterator<Item = MtsvResult<(String, Vec::<Hit>)>> + 'a> {
-    // TODO: replace with -> impl Trait when stabilized
-
-    // the BufRead::lines function handles lazily splitting on lines for us
-    Box::new(s.lines().map(|l| {
-        l.map_err(|e| MtsvError::from(e)).and_then(|l| {
-            let l = l.trim();
-            // split from the right in case someone put colons in the read ID
-            let mut halves = l.rsplitn(2, ':');
-
-    
-            // the first split iteration will always return something, even if it's empty
-            let taxids = halves.next().unwrap().split(',');
-
-            // create vec of hits 
-            let mut hits = Vec::<Hit>::new();
-
-            // parse each taxid (comma separated), returning None if it fails
-            for taxid_raw in taxids {
-                let mut res = taxid_raw.split('=');
-                let tax = match res.next().unwrap().parse::<TaxId>(){
-                        Ok(id) => id,
-                        Err(_) => return Err(MtsvError::InvalidInteger("".to_string())),
-                    };
-
-                let edit = match res.next().unwrap().parse::<u32>(){
-                    Ok(ed) => ed,
-                    Err(_) => return Err(MtsvError::InvalidInteger("".to_string())),
-                    };
-
-
-                // append this hit
-                let hit = Hit {
-                        tax_id: tax,
-                        gi: Gi(0),
-                        offset: 0,    
-                        edit: edit
-                    };
-                hits.push(hit);
-            }
-    
-            // since we're parsing from the right of each line, the read ID is the second token
-            let read_id = match halves.next() {
-                Some(r) => {
-                    if r.len() > 0 {
-                        r.to_string()
-                    } else {
-                        return Err(MtsvError::InvalidHeader(l.to_string()));
-                    }
-                },
-                None => return Err(MtsvError::InvalidHeader(l.to_string())),
-            };
-
-            Ok((read_id, hits))
-        })
+    Box::new(s.lines().filter_map(|line| {
+        let line = match line {
+            Ok(value) => value,
+            Err(err) => return Some(Err(MtsvError::from(err))),
+        };
+        match parse_result_record(&line) {
+            Ok(Some(record)) => Some(Ok((record.read_id, record.hits))),
+            Ok(None) => None,
+            Err(err) => Some(Err(err)),
+        }
     }))
 }
 
@@ -404,6 +478,29 @@ asldkfj:3,4,5,6")
         }
 
         assert_eq!(expected, results);
+    }
+
+    #[test]
+    fn parses_headered_table_results_and_preserves_loci() {
+        let input = b"read_id\tread_length\ttaxa\tGID\tposition\tedit_distance\nread1\t151\t2;5\t10;12\t4;8\t2;3\n";
+        let records: Vec<_> = parse_edit_distance_findings(input.as_slice())
+            .map(|result| result.unwrap()).collect();
+        assert_eq!(1, records.len());
+        assert_eq!("read1", records[0].0);
+        assert_eq!(2, records[0].1.len());
+        assert_eq!(TaxId(2), records[0].1[0].tax_id);
+        assert_eq!(Gi(10), records[0].1[0].gi);
+        assert_eq!(4, records[0].1[0].offset);
+        assert_eq!(2, records[0].1[0].edit);
+
+        let parsed = parse_result_record(
+            "read1\t151\t2;5\t10;12\t4;8\t2;3").unwrap().unwrap();
+        assert_eq!(Some(151), parsed.read_length);
+    }
+
+    #[test]
+    fn rejects_misaligned_table_lists() {
+        assert!(parse_result_record("read1\t151\t2;5\t10\t4;8\t2;3").is_err());
     }
 
     #[test]

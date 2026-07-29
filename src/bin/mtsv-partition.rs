@@ -10,7 +10,8 @@ use clap::{App, Arg};
 use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use mtsv::error::{MtsvError, MtsvResult};
+use mtsv::error::MtsvResult;
+use mtsv::io::result_read_id;
 use mtsv::util;
 use std::collections::HashSet;
 use std::fs::File;
@@ -71,15 +72,9 @@ fn read_ids_from_results(paths: &[&str]) -> MtsvResult<HashSet<String>> {
             if line.trim().is_empty() {
                 continue;
             }
-            let mut halves = line.rsplitn(2, ':');
-            let _hits = halves.next().unwrap_or("");
-            let read_id = halves
-                .next()
-                .ok_or_else(|| MtsvError::InvalidHeader(line.to_string()))?;
-            if read_id.is_empty() {
-                return Err(MtsvError::InvalidHeader(line.to_string()));
+            if let Some(read_id) = result_read_id(&line)? {
+                ids.insert(read_id.to_string());
             }
-            ids.insert(read_id.to_string());
         }
     }
     Ok(ids)

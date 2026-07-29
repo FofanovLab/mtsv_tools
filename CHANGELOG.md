@@ -22,6 +22,13 @@
 * `mtsv-partition` now writes compressed output when `--matched` / `--unmatched` paths end with `.gz`.
 * `mtsv-collapse --report` now writes percentage columns with 6 decimal places (previously 2).
 
+### Added
+
+* `mtsv-binner --output-format table` writes headered TSV assignments with read length and compact,
+  parallel taxid/GID/position/edit-distance lists.
+* Result readers used by collapse, partition, and resume now automatically accept legacy and table
+  formats, including mixed collapse inputs.
+
 ## [2.1.0] – 2026-02-16
 
 ### Added

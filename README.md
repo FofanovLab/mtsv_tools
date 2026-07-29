@@ -197,14 +197,56 @@ Performs taxonomic assignment using q-gram filtering followed by SIMD-accelerate
 | `--min-seed`      | Minimum fraction of seeds that must match in a candidate region before triggering alignment. Controls filtering stringency. Implemented as $\lfloor \mathrm{min\_seed} \times  \mathrm{n\_seeds}\rfloor$ where $\mathrm{n\_seeds} \approx \lceil(\mathrm{read\_length} - \mathrm{seed\_size} + 1)/\mathrm{seed\_interval}\rceil$|
 | `--edit-rate`     | Maximum allowed edit proportion (normalized by read length) for a successful alignment.                                              |
 
+##### Adaptive seeding (opt in)
+
+Fixed seeding remains the default. `--seeding-mode adaptive` enables variable-length, hit-count
+adaptive seeds: common seeds are lengthened to reduce candidate expansion, while seeds with no
+exact match are shortened to recover sensitivity around read errors.
+
+| Option | Description |
+| ------ | ----------- |
+| `--seeding-mode fixed\|adaptive` | Select fixed (default) or adaptive variable-length seeding. |
+| `--adaptive-min-seed-size` | Minimum rescue seed length. Must be no larger than `--seed-size`. Default: 16. |
+| `--adaptive-max-seed-size` | Maximum seed length used to reduce repetitive hits. Default: 30. |
+| `--adaptive-target-hits` | Lengthen a seed while its FM-index interval contains more hits than this target. Default: 100. |
+| `--adaptive-step` | Bases added or removed for each seed-length probe. Default: 2. |
+
 ##### Performance parameters
 | Option              | Description                                                                                                                                                          |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--max-hits`        | Skip seeds that match more than this many locations in the index. Prevents expensive alignment attempts in repetitive regions.                                       |
 | `--tune-max-hits`   | If seed hits exceed this threshold (but are below `--max-hits`), the seed interval is automatically increased (interval doubled) to reduce seed density and runtime. |
 | `--max-candidates`  | Maximum number of candidate regions evaluated per read. Candidates are prioritized by seed-hit count (most promising first). This allows early termination in highly conserved or repetitive regions, preventing excessive alignment attempts and reducing runtime.                                                                                                           |
-| `--max-assignments` | Stop after this many successful TaxID assignments per read. Useful for limiting ambiguous mappings in highly conserved regions (e.g., 16S rRNA reads), where a single read may align equally well to many taxa. This prevents excessive reporting
+| `--max-assignments` | Stop after this many distinct TaxIDs have successful alignments per read orientation. Multiple successful loci for the same TaxID do not consume this limit. |
+| `--max-alignments-per-taxid` | Continue checking candidates for a TaxID until this many successful alignments have been found, then skip later candidates for that TaxID. Applied independently to each read orientation. Default: 1, preserving the existing behavior. |
 | `--threads` | Number of parallel worker threads                                                          |
+
+The three alignment limits remain independent: `--max-candidates` counts every candidate visited,
+`--max-assignments` counts distinct successfully assigned TaxIDs, and
+`--max-alignments-per-taxid` counts successful reference alignments within each TaxID. Increasing
+the per-TaxID limit is most visible with `--output-format long`; default output still reports the
+best edit distance per TaxID.
+
+##### Benchmark/debug statistics
+
+`--debug-stats <PATH>` writes a TSV row for each read orientation. Normal assignment output is
+unchanged. The file includes total per-read and per-orientation time (microseconds), time spent in
+seeding, candidate coalescing, and alignment, FM-index query counts, seed occurrence counts,
+selected seed lengths, generated and checked candidates, alignment checks, successful alignments,
+and distinct matched TaxIDs. Because
+the file is intended for an individual benchmark run, it is overwritten rather than resumed.
+
+For reproducible comparisons, use the same read offset, index, thread count, and assignment limits:
+
+```bash
+mtsv-binner --fastq reads.fastq --index database.mg-index --results fixed.mtsv \
+  --seeding-mode fixed --debug-stats fixed.stats.tsv
+
+mtsv-binner --fastq reads.fastq --index database.mg-index --results adaptive.mtsv \
+  --seeding-mode adaptive --adaptive-min-seed-size 16 \
+  --adaptive-max-seed-size 30 --adaptive-target-hits 100 \
+  --debug-stats adaptive.stats.tsv
+```
 
 ##### IO/Resume controls
 | Option              | Description                                                                              |
@@ -212,7 +254,7 @@ Performs taxonomic assignment using q-gram filtering followed by SIMD-accelerate
 | `--fasta`         | Input read file in FASTA format. Accepts gzipped files. |
 | `--fastq` | Input read file in FASTQ format. Accepts gzipped files. |
 | `--results`         | Output file (one per index). If file is already present, `mtsv-binner` will resume from the last point unless `--force-overwrite` is passed and append to the existing file.                                                                        |
-| `--output-format`   | `default` (`taxid=edit`) or `long` (`taxid-gi-offset=edit`). Report the taxid or full metadata including the exact genome ID and offset position. The latter is useful for gene annotation when doing metatranscriptic analysis.                            |
+| `--output-format`   | `default` (`taxid=edit`), `long` (`taxid-GID-position=edit`), or `table` (headered TSV including read length and parallel alignment lists). |
 | `--read-offset`     | Skip a number of reads before processing (useful for chunked processing or external resume logic) |
 | `--force-overwrite` | Overwrite existing results instead of resuming                                           |                                                                                          
 ```
@@ -238,8 +280,8 @@ OPTIONS:
         --min-seed <MIN_SEED>                  Set the minimum percentage of seeds required to perform an alignment.
                                                [default: 0.015]
     -t, --threads <NUM_THREADS>                Number of worker threads to spawn. [default: 4]
-        --output-format <OUTPUT_FORMAT>        Output format: default (taxid=edit) or long (taxid-gi-offset=edit).
-                                               [default: default]  [possible values: default, long]
+        --output-format <OUTPUT_FORMAT>        Output format: default, long, or headered table TSV.
+                                               [default: default]  [possible values: default, long, table]
         --read-offset <READ_OFFSET>            Skip this many reads before processing. [default: 0]
     -m, --results <RESULTS_PATH>               Path to write results file.
         --seed-interval <SEED_INTERVAL>        Set the interval between seeds used for initial exact match. [default:
@@ -260,8 +302,25 @@ or with `--output-format long`:
 READ_ID:TAXID-GENOMEID-POS=EDIT_DISTANCE,...
 ```
 
+With `--output-format table`, output is a headered TSV:
+
+```text
+read_id read_length taxa   GID     position edit_distance
+read1   151         2;5    10;12   4;8      2;3
+```
+
+The displayed spacing represents tab characters. Multiple alignments use compact semicolon lists;
+values at the same list index belong together. For example, taxid `2`, GID `10`, position `4`, and
+edit distance `2` describe one alignment. The edit-distance column is retained because collapse
+and ranking operations require it. A table header is written once for a new results file and is not
+duplicated when resuming.
+
 ## Merge Results (`mtsv-collapse`)
 Combines multiple chunk-level assignment files into a single consolidated output. 
+
+`mtsv-collapse`, `mtsv-partition`, `mtsv-resume-point`, and automatic binner resume detect both
+legacy colon output and headered table output. Collapse accepts legacy, table, or mixed inputs and
+continues writing its established legacy output, so existing consumers are not broken.
 
 If the same read is assigned to the same TaxID across multiple files:
 
