@@ -58,6 +58,7 @@ Main Workflow
 Utilities
 * `mtsv-partition`
 * `mtsv-reference`
+* `mtsv-reference-list`
 
 
 ## Reference Sequence Data
@@ -111,6 +112,32 @@ Constructs an MG-index (FM-index + metadata) from a FASTA fasta. One MG-index is
 ```
 $ mtsv-build --fasta /path/to/chunkN.fasta --index /path/to/write/chunkN.index
 ```
+
+Multiple FASTA files can be supplied to build one combined index. They are streamed sequentially
+as though they had first been concatenated, without creating a temporary combined file:
+
+```bash
+mtsv-build --fasta refs-a.fasta refs-b.fasta refs-c.fasta --index combined.index
+```
+
+Repeating the option is also supported: `--fasta refs-a.fasta --fasta refs-b.fasta`. When a mapping
+file is used, it must contain entries for records across all input FASTA files.
+
+For large collections, provide one FASTA path per line with `--fasta-list` instead. Blank lines and
+lines beginning with `#` are ignored. Relative paths are resolved relative to the list file:
+
+```text
+# references.txt
+refs/archaea.fasta
+refs/bacteria.fasta
+/data/viruses.fasta
+```
+
+```bash
+mtsv-build --fasta-list references.txt --index combined.index
+```
+
+`--fasta` and `--fasta-list` are mutually exclusive.
 ##### Performance tuning
 
 | Option              | Description                                |
@@ -128,6 +155,19 @@ Using default settings, indices will be ~3.5x the size of the reference file and
 `mtsv-build` requires a mapping between each reference sequence and an NCBI TaxID. This can be provided in one of two ways:
 
 **Option 1:** Encode TaxID directly in the FASTA header (Default Behavior)
+
+Headers may contain either a primary taxonomy ID or both a primary and alternate numeric ID:
+
+```text
+>SEQID-PRIMARY_TAXID
+>SEQID-PRIMARY_TAXID-ALTERNATE_TAXID
+```
+
+Single-ID headers retain their existing behavior. For dual-taxonomy indexes,
+`mtsv-binner --taxonomy-source primary` is the default; use `--taxonomy-source alternate` to use the alternate
+IDs for both assignment output and taxon-based stopping limits (`--max-assignments` and
+`--max-alignments-per-taxid`). Alternate IDs must be present for every indexed reference. Both ID
+fields are currently numeric `u32` values.
 ```
 >SEQID-TAXID
 ``` 
@@ -147,16 +187,25 @@ The mapping file must:
 - Contain a header row.
 - Include the following columns:
     - header — FASTA ID (must match exactly the first token of the FASTA header)
-    - taxid — NCBI TaxID
+    - taxid — primary numeric taxonomy ID
+    - alternate_taxid — optional alternate numeric taxonomy ID
     - seqid — Internal sequence identifier
 
 The parser is delimiter-agnostic (comma, tab, or whitespace).
 
 Example:
 ```
+header,taxid,alternate_taxid,seqid
+NC_000001.11,9606,100001,1
+NC_000913.3,562,100562,2
+NC_002695.2,83333,183333,3
+```
+
+The existing three-column form remains valid when alternate IDs are not needed:
+
+```text
 header,taxid,seqid
-NC_000913.3,562,1038924
-NC_002695.2,83333,1038925
+NC_000001.11,9606,1
 ```
 If a FASTA ID is missing from the mapping file, mtsv-build will error by default; use `--skip-missing` to warn and skip those records instead.
 
@@ -164,7 +213,7 @@ If a FASTA ID is missing from the mapping file, mtsv-build will error by default
 Index construction for mtsv metagenomic and metatranscriptomic assignment tool.
 
 USAGE:
-    mtsv-build [FLAGS] [OPTIONS] --fasta <FASTA> --index <INDEX>
+    mtsv-build [FLAGS] [OPTIONS] --index <INDEX> <--fasta <FASTA>...|--fasta-list <FASTA_LIST>>
 
 FLAGS:
     -v               Include this flag to trigger debug-level logging.
@@ -172,7 +221,8 @@ FLAGS:
     -V, --version    Prints version information
 
 OPTIONS:
-    -f, --fasta <FASTA>                           Path to FASTA database file.
+    -f, --fasta <FASTA>...                        One or more FASTA database files.
+        --fasta-list <FASTA_LIST>                 Text file containing one FASTA path per line.
         --sample-interval <FM_SAMPLE_INTERVAL>
             BWT occurance sampling rate. If sample interval is k, every k-th entry will be kept. [default: 64]
 
@@ -186,7 +236,33 @@ OPTIONS:
 
 
 ## Binning Reads (`mtsv-binner`)
-Performs taxonomic assignment using q-gram filtering followed by SIMD-accelerated Smith-Waterman alignment. The binning command is run for each read set against each index chunk. Paired end reads can be run separately or merged prior to running. 
+Performs taxonomic assignment using q-gram filtering followed by SIMD-accelerated Smith-Waterman alignment. The binning command is run for each read set against each index chunk.
+
+#### Paired-end reads
+
+`mtsv-binner` is not pair-aware. It processes every FASTA/FASTQ record independently and does not
+use mate relationships, insert size, pair orientation, or one mate to rescue the other. Searching
+both the forward sequence and its reverse complement is part of single-read matching and is not
+paired-end handling.
+
+There are three distinct workflows that should not be confused:
+
+1. **Merge the read sequences before MTSv.** Use an external paired-read merger to combine
+   overlapping R1 and R2 sequences, then run `mtsv-binner` on the merged reads. MTSv does not merge
+   the sequences itself.
+2. **Keep mates independent.** Run R1 and R2 separately, or concatenate their FASTQ records, while
+   retaining distinct IDs such as `read123/1` and `read123/2`. They remain separate assignments
+   because their IDs differ.
+3. **Combine mate results by read ID.** Give both result files to `mtsv-collapse` with exactly the
+   same ID for both mates, such as `read123`. Collapse groups exact ID matches and produces one
+   result line for that ID. This combines assignment evidence after binning; it does not merge the
+   nucleotide sequences or perform paired alignment.
+
+IDs are compared as exact strings after FASTA/FASTQ parsing; the ID is the first header token and
+does not include the description after whitespace. For example, `read123/1`, `read123/2`, and
+`read123` are three different reads and will not be combined. Duplicate IDs written by
+`mtsv-binner` are not combined automatically; combination occurs when the result files are passed
+through `mtsv-collapse`.
 
 
 ##### Core alignment parameters
@@ -197,7 +273,11 @@ Performs taxonomic assignment using q-gram filtering followed by SIMD-accelerate
 | `--min-seed`      | Minimum fraction of seeds that must match in a candidate region before triggering alignment. Controls filtering stringency. Implemented as $\lfloor \mathrm{min\_seed} \times  \mathrm{n\_seeds}\rfloor$ where $\mathrm{n\_seeds} \approx \lceil(\mathrm{read\_length} - \mathrm{seed\_size} + 1)/\mathrm{seed\_interval}\rceil$|
 | `--edit-rate`     | Maximum allowed edit proportion (normalized by read length) for a successful alignment.                                              |
 
-##### Adaptive seeding (opt in)
+##### Adaptive seeding (beta, opt in)
+
+> **Beta:** Adaptive seeding is experimental and may change in future releases. Validate its
+> sensitivity, accuracy, and performance on representative data before using it in production
+> workflows. Fixed seeding remains the supported default.
 
 Fixed seeding remains the default. `--seeding-mode adaptive` enables variable-length, hit-count
 adaptive seeds: common seeds are lengthened to reduce candidate expansion, while seeds with no
@@ -255,6 +335,7 @@ mtsv-binner --fastq reads.fastq --index database.mg-index --results adaptive.mts
 | `--fastq` | Input read file in FASTQ format. Accepts gzipped files. |
 | `--results`         | Output file (one per index). If file is already present, `mtsv-binner` will resume from the last point unless `--force-overwrite` is passed and append to the existing file.                                                                        |
 | `--output-format`   | `default` (`taxid=edit`), `long` (`taxid-GID-position=edit`), or `table` (headered TSV including read length and parallel alignment lists). |
+| `--taxonomy-source` | Taxonomy ID namespace used for output and taxon-based stopping: `primary` (default) or `alternate`. |
 | `--read-offset`     | Skip a number of reads before processing (useful for chunked processing or external resume logic) |
 | `--force-overwrite` | Overwrite existing results instead of resuming                                           |                                                                                          
 ```
@@ -327,7 +408,33 @@ If the same read is assigned to the same TaxID across multiple files:
 - The assignment with the lowest edit distance is retained.
 - Higher-edit-distance duplicates are discarded.
 
-By default (`--mode taxid`), collapsing is performed at the TaxID level. If `--mode taxid-gi` is used, collapsing occurs at the TaxID–Genome ID level, meaning the minimum edit distance is preserved per TaxID–reference combination rather than per TaxID alone. The latter is preferred if downstream annotation will be performed because preserving assignments at the genome level increases the likelihood of capturing all relevant gene annotations associated with those hits.
+Collapse groups records by exact read ID, including records produced from paired reads if both mates
+were deliberately given the same ID. It does not infer mate relationships from `/1`, `/2`, FASTQ
+order, or file names.
+
+By default (`--mode taxid`), collapse retains the minimum edit distance independently for each
+TaxID associated with that read ID. It does not discard other TaxIDs merely because one TaxID has a
+lower edit distance. For example:
+
+```text
+R1: read123:562=1,1280=3
+R2: read123:562=2,1280=1
+collapsed: read123:562=1,1280=1
+```
+
+With `--mode taxid-gi`, collapse instead retains the minimum edit distance independently for each
+TaxID–genome-ID pair. This mode requires results that contain genome IDs, such as binner `long` or
+`table` output. If duplicate hits for a pair have the same edit distance and include reference
+positions, the smaller position is retained. For example:
+
+```text
+R1: read123:562-10-400=1,562-11-200=3
+R2: read123:562-10-600=2,562-11-300=1
+collapsed: read123:562-10-400=1,562-11-300=1
+```
+
+The `taxid-gi` mode is preferred if downstream annotation will be performed because preserving
+assignments at the genome level increases the likelihood of retaining relevant gene annotations.
 
 ```
 Tool for combining the output of multiple separate mtsv runs.
@@ -425,13 +532,14 @@ OPTIONS:
 
 ## Reference Extraction
 
-The `mtsv-reference` command extracts reference sequences for a taxid from an MG-index.
+The `mtsv-reference` command extracts all reference sequences for a TaxID, or a selected region
+from a particular genome/sequence ID, from an MG-index.
 
 ```
-Extract reference sequences for taxids present in mtsv results.
+Extract reference sequences or a selected reference region from an MTSv index.
 
 USAGE:
-    mtsv-reference [FLAGS] [OPTIONS] <TAXID>... --index <INDEX>
+    mtsv-reference [FLAGS] [OPTIONS] [TAXID]... --index <INDEX> --results <RESULTS_PATH>
 
 FLAGS:
     -v               Include this flag to trigger debug-level logging.
@@ -441,7 +549,68 @@ FLAGS:
 OPTIONS:
     -i, --index <INDEX>             Absolute path to mtsv index file.
     -r, --results <RESULTS_PATH>    Output file path (FASTA).
+        --seqid <SEQID>             Genome/sequence ID to extract.
+        --taxid <TAXID>             Optional taxid used to disambiguate --seqid.
+        --start <START>             Zero-based inclusive region start.
+        --end <END>                 Zero-based exclusive region end.
+        --regions <REGIONS>         TSV containing taxid, seqid, start, and end columns.
 
 ARGS:
     <TAXID>...    Extract reference sequences for taxid
+```
+
+To extract a region from a particular genome/sequence ID, provide zero-based, half-open
+coordinates (`start` is included and `end` is excluded):
+
+```bash
+mtsv-reference \
+  --index reference.index \
+  --seqid 12345 \
+  --start 100000 \
+  --end 108000 \
+  --results region.fasta
+```
+
+This writes 8,000 bases with a header such as `>12345-9606:100000-108000`. If genome IDs are not
+unique within the index, add `--taxid 9606` to select the intended reference.
+
+For many regions from the same index, use `--regions` so the full index is deserialized only once:
+
+| taxid | seqid | start | end |
+| ----- | ----- | ----- | --- |
+| 9606 | 12345 | 100000 | 108000 |
+| 9606 | 12345 | 200000 | 201000 |
+| 10090 | 67890 | 500 | 1500 |
+
+The actual file must be tab-separated (the table above is rendered for readability) and must
+contain the exact header `taxid`, `seqid`, `start`, `end` in that order. Coordinates are zero-based and
+half-open: `start` is included and `end` is excluded. Run the batch extraction with:
+
+```bash
+mtsv-reference \
+  --index reference.index \
+  --regions regions.tsv \
+  --results regions.fasta
+```
+
+All requested regions are written to the same FASTA in table order. The index is loaded once for
+the entire table rather than once per region. A row fails if its TaxID/sequence-ID combination is
+absent, `start` is not less than `end`, or `end` exceeds the sequence length.
+
+## Reference Listing
+
+The `mtsv-reference-list` command writes a tab-separated table describing every reference in one
+or more MG-indices. Indices are numbered from 1 in the order supplied. Output is written to stdout
+unless `--output` is provided.
+
+```bash
+mtsv-reference-list chunk0.index chunk1.index --output references.tsv
+```
+
+The output columns are `index`, `taxid`, `genome_id`, and `length`:
+
+```text
+index  taxid  genome_id  length
+1      9606   12345      248956422
+2      10090  67890      195471971
 ```

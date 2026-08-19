@@ -4,7 +4,9 @@ use bio::io::fasta;
 
 use crate::error::*;
 use crate::index::MGIndex;
-use crate::io::{parse_fasta_db, parse_fasta_db_with_mapping, write_to_file, HeaderMap};
+use crate::io::{
+    parse_fasta_db_with_alternates, parse_fasta_db_with_mapping, write_index_to_file, HeaderMap,
+};
 use std::io;
 
 /// Build and write the metagenomic index to disk.
@@ -19,30 +21,32 @@ pub fn build_and_write_index<R>(
     mapping: Option<&HeaderMap>,
     skip_missing: bool,
 ) -> MtsvResult<()>
-    where R: Iterator<Item = io::Result<fasta::Record>>
+where
+    R: Iterator<Item = io::Result<fasta::Record>>,
 {
-    let taxon_map = match mapping {
+    let (taxon_map, alternatives) = match mapping {
         Some(map) => parse_fasta_db_with_mapping(records, map, skip_missing)?,
-        None => parse_fasta_db(records)?,
+        None => parse_fasta_db_with_alternates(records)?,
     };
 
     info!("File parsed, building index...");
-    let index = MGIndex::new(taxon_map, sample_interval, suffix_sample);
+    let mut index = MGIndex::new(taxon_map, sample_interval, suffix_sample);
+    index.set_alternative_taxonomy(alternatives);
 
     info!("Writing index to file...");
-    write_to_file(&index, index_path)?;
+    write_index_to_file(&index, index_path)?;
 
     Ok(())
 }
 
 #[cfg(test)]
 mod test {
-    use bio::io::fasta::Reader;
-    use tempfile::NamedTempFile;
-    use std::io::Cursor;
     use super::build_and_write_index;
-    use crate::io::from_file;
     use crate::index::MGIndex;
+    use crate::io::from_file;
+    use bio::io::fasta::Reader;
+    use std::io::Cursor;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn success() {
@@ -56,7 +60,7 @@ TTTCACCTAGTACATTAAATACACGACCTAATGTTTCGTCACCAACAGGTACACTAATTTCTTTGCCTGTATCTTTTACA
 AAAACACATATTTTCAAATCTAGTAAATATTAAATCTACTCTTGACGATTGCACCAATGCTACGCGATATAGATATCCACTAAAAACATACGTAATCATAACCATCATTGTTAGAAACAAAATTATTTCCATGATAACCCTCACTTAATATATTTCTAAAATTTTTCACTACGAATTAAGGCATAAAATAAATACAAAACTAATGCAATAACTACCAGTAATAAAACGATGAGCATTGCCATAACC";
 
         let records = Reader::new(Cursor::new(reference.as_bytes())).records();
-        let outfile = NamedTempFile::new().unwrap();    
+        let outfile = NamedTempFile::new().unwrap();
         let outfile_path = outfile.path().to_path_buf();
         let outfile_str = outfile_path.to_str().unwrap();
 
