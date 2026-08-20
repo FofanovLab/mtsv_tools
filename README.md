@@ -12,6 +12,14 @@ Wrapper pipelines and companion utilities are being developed to streamline refe
 ## Install with Conda (recommended)
 `conda install mtsv-tools -c bioconda `
 
+> **Apple Silicon limitation:** MTSv Tools may be installed on Apple Silicon systems, but the
+> bundled striped Smith–Waterman (SSW) implementation uses x86 SSE2 intrinsics and currently
+> cannot be compiled as native ARM64 code. Consequently, `mtsv-binner` does not work in a native
+> Apple Silicon build. Commands that operate on previously generated indices or assignment files
+> do not perform Smith–Waterman alignment, but building the complete project from source still
+> encounters the SSW compilation failure. An x86-64 build running under Rosetta is the current
+> workaround for binning on Apple Silicon.
+
 
 ## Building from Source
 
