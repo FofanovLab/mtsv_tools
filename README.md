@@ -54,6 +54,9 @@ Main Workflow
 * `mtsv-build`
 * `mtsv-binner`
 * `mtsv-collapse`
+* `mtsv-filter`
+* `mtsv-regions`
+* `mtsv-region-extract`
 
 Utilities
 * `mtsv-partition`
@@ -460,6 +463,137 @@ ARGS:
 ##### Taxon-Level Report
 
 If `--report` is specified, a summary table is generated with per-TaxID statistics describing how reads were assigned.
+
+## Filter Results (`mtsv-filter`)
+
+`mtsv-filter` applies per-read hit filters to default inline, long inline, table, or mixed binner
+output. Filters are always applied in this order:
+
+1. `--include-taxa`: retain only hits assigned to the listed TaxIDs.
+2. `--exclude-taxa`: remove hits assigned to the listed TaxIDs.
+3. `--max-edit`: remove hits with edit distance greater than the cutoff.
+4. `--edit-delta`: after the preceding filters, retain hits where
+   `edit <= minimum_remaining_edit + edit_delta`.
+
+The include and exclude options each take a text file containing one numeric TaxID per line. Blank
+lines and lines beginning with `#` are ignored. Reads with no remaining hits are omitted.
+
+```text
+# include-taxa.txt
+2
+2157
+10239
+```
+
+```bash
+mtsv-filter \
+  --input chunk1.tsv chunk2.mtsv \
+  --include-taxa include-taxa.txt \
+  --exclude-taxa exclude-taxa.txt \
+  --max-edit 8 \
+  --edit-delta 2 \
+  --output-format table \
+  --output filtered.tsv
+```
+
+The output format may be `inline` (the default `read:taxid=edit,...` representation) or `table`.
+Table input preserves its read length, GID, and position values. Legacy inline input does not carry
+a read length; when converted to table output its `read_length` is written as `0`. Default inline
+input also lacks GID and position, so those table fields are written as `0`.
+
+```text
+USAGE:
+    mtsv-filter [FLAGS] [OPTIONS] --input <INPUT>... --output <OUTPUT>
+
+OPTIONS:
+    -i, --input <INPUT>...                 One or more binner result files
+    -o, --output <OUTPUT>                  Path to write filtered results
+        --include-taxa <INCLUDE_TAXA>      Text file of TaxIDs to retain
+        --exclude-taxa <EXCLUDE_TAXA>      Text file of TaxIDs to remove
+        --max-edit <MAX_EDIT>              Maximum allowed edit distance
+        --edit-delta <EDIT_DELTA>          Allowed distance above the best remaining hit
+        --output-format <OUTPUT_FORMAT>    inline or table [default: inline]
+```
+
+## Build Hit Regions Across Samples (`mtsv-regions`)
+
+`mtsv-regions` groups locus-bearing assignment hits from multiple samples into reference regions.
+It accepts table output and long inline output (`taxid-GID-position=edit`). Default inline output
+(`taxid=edit`) is rejected because it does not contain sequence IDs or positions.
+
+Each input path represents one sample:
+
+```bash
+mtsv-regions \
+  --input soil.assignments.tsv water.assignments.tsv \
+  --merge-gap 100 \
+  --flank 500 \
+  --regions regions.tsv
+```
+
+Hits are grouped independently by TaxID and sequence ID. After sorting by position, consecutive
+hits separated by no more than `--merge-gap` bases are merged. The resulting bounds are expanded
+by `--flank` bases on both ends. Coordinates are zero-based, half-open; the left bound clips at
+zero. The right bound cannot be clipped to the reference length because assignment files do not
+contain that metadata.
+
+The region table contains:
+
+```text
+region_id  taxid  seqid  start  end  region_size  sample_count  hit_count
+```
+
+`sample_count` is the number of distinct input samples contributing hits, while `hit_count` is the
+total number of assignment hits in the region. Compact region identifiers are deterministic
+(`r_000001`, `r_000002`, and so on), ordered by TaxID, sequence ID, and position.
+
+One read-map table is written alongside each input assignment file by prepending `regions.` to its
+filename. For example, `/data/soil.assignments.tsv` produces
+`/data/regions.soil.assignments.tsv`. Each file contains one row per read/region combination:
+
+```text
+read_id  region_id  taxid  seqid  hit_count  positions  edit_distances
+```
+
+When one read has multiple hits in the same region, `positions` and `edit_distances` are parallel
+semicolon-separated lists.
+
+## Extract Region Sequences (`mtsv-region-extract`)
+
+`mtsv-region-extract` takes the full summary produced by `mtsv-regions`, intersects its
+`(taxid, seqid)` pairs with one or more indices, and writes each requested interval as FASTA. Only
+one index is held in memory at a time, and loading stops once all regions have been resolved.
+
+```bash
+mtsv-region-extract \
+  --regions regions.tsv \
+  --index chunk1.index chunk2.index chunk3.index \
+  --output region-sequences.fasta
+```
+
+The FASTA record ID is the compact region ID:
+
+```text
+>r_000001
+ACGT...
+```
+
+Required columns are located by name, so the additional `region_size`, `sample_count`, and
+`hit_count` columns in the region summary are accepted. Region ends extending beyond a reference
+because of `--flank` are clipped to the actual reference length. If a `(taxid, seqid)` pair occurs
+in more than one supplied index, the first index in command-line order supplies it. Multiple
+matching references inside that index are treated as ambiguous and cause an error. The command
+also errors if any requested pair is absent from all supplied indices.
+
+For regions generated from alternate taxonomy assignments, select the matching index namespace:
+
+```bash
+mtsv-region-extract \
+  --regions regions.tsv \
+  --index chunk1.index chunk2.index \
+  --taxonomy-source alternate \
+  --output region-sequences.fasta
+```
 
 Example:
 ```

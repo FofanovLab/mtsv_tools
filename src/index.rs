@@ -868,6 +868,65 @@ impl MGIndex {
             .map(|bin| (bin.tax_id.0, bin.gi.0, bin.end - bin.start))
     }
 
+    /// Iterate over reference metadata using the selected taxonomy namespace.
+    pub fn reference_metadata_for_taxonomy(
+        &self,
+        source: TaxonomySource,
+    ) -> impl Iterator<Item = (u32, u32, usize)> + '_ {
+        self.bins.iter().map(move |bin| {
+            (
+                self.taxonomy_id(bin, source).0,
+                bin.gi.0,
+                bin.end - bin.start,
+            )
+        })
+    }
+
+    /// Extract a region selected in either taxonomy namespace, optionally clipping its end to the
+    /// reference length. Returns all references matching the taxonomy and sequence ID pair.
+    pub fn get_reference_regions_for_taxonomy(
+        &self,
+        genome_id: u32,
+        taxid: u32,
+        start: usize,
+        end: usize,
+        source: TaxonomySource,
+        clip_end: bool,
+    ) -> crate::error::MtsvResult<Vec<Sequence>> {
+        if start >= end {
+            return Err(crate::error::MtsvError::AnyhowError(format!(
+                "Invalid reference range {}..{}: start must be less than end",
+                start, end
+            )));
+        }
+        let mut regions = Vec::new();
+        for bin in self
+            .bins
+            .iter()
+            .filter(|bin| bin.gi.0 == genome_id && self.taxonomy_id(bin, source).0 == taxid)
+        {
+            let sequence_length = bin.end - bin.start;
+            if start >= sequence_length {
+                return Err(crate::error::MtsvError::AnyhowError(format!(
+                    "Region start {} is outside length {} for genome ID {} (taxid {})",
+                    start, sequence_length, genome_id, taxid
+                )));
+            }
+            let selected_end = if clip_end {
+                end.min(sequence_length)
+            } else if end > sequence_length {
+                return Err(crate::error::MtsvError::AnyhowError(format!(
+                    "Range {}..{} exceeds length {} for genome ID {} (taxid {})",
+                    start, end, sequence_length, genome_id, taxid
+                )));
+            } else {
+                end
+            };
+            regions.push(self.sequences[bin.start + start..bin.start + selected_end].to_vec());
+        }
+        Ok(regions)
+    }
+
     /// Return a zero-based, half-open region from references matching a genome ID and optional
     /// taxid.
     pub fn get_reference_regions(

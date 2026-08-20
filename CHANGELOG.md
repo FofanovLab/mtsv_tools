@@ -1,5 +1,12 @@
 # Changelog
 
+* Added `mtsv-filter` for ordered per-read TaxID inclusion/exclusion from text files, maximum-edit,
+  and best-hit edit-delta filtering across inline, long, table, and mixed binner outputs.
+* Added `mtsv-regions` to merge locus-bearing assignment hits across sample files and write
+  region summaries plus compact, automatically named per-sample read-to-region mappings.
+* Added `mtsv-region-extract` to intersect region summaries with multiple sequentially loaded
+  indices and extract clipped intervals using region IDs as FASTA headers.
+
 ## [2.1.1] – 2026-03-11
 
 ### Fixed
