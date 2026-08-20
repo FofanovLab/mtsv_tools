@@ -31,7 +31,7 @@ struct Dna5BaseShrinker {
 }
 
 impl Dna5BaseShrinker {
-    pub fn new(x: Dna5Base) -> Box<Iterator<Item=Dna5Base>> {
+    pub fn new(x: Dna5Base) -> Box<Iterator<Item = Dna5Base>> {
         Box::new(Dna5BaseShrinker { current: x })
     }
 }

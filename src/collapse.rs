@@ -189,8 +189,11 @@ fn table_line_as_long(line: &str) -> MtsvResult<Option<String>> {
         if idx > 0 {
             output.push(',');
         }
-        let _ = write!(output, "{}-{}-{}={}",
-                       hit.tax_id.0, hit.gi.0, hit.offset, hit.edit);
+        let _ = write!(
+            output,
+            "{}-{}-{}={}",
+            hit.tax_id.0, hit.gi.0, hit.offset, hit.edit
+        );
     }
     output.push('\n');
     Ok(Some(output))
@@ -855,6 +858,7 @@ r1\t151\t1;2\t5;8\t3;1\t7;6\n";
         collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxIdGi, 1).unwrap();
         assert_eq!(
             "r1:1-5-2=4,2-8-1=6\nr2:3-9-1=2\n",
-            String::from_utf8(buf).unwrap());
+            String::from_utf8(buf).unwrap()
+        );
     }
 }

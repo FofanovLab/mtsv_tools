@@ -15,7 +15,6 @@ pub const IDENT_W_PENALTY_NO_N_MATCH: [i8; 25] =
      -1, -1, -1, 1, -1,
      -1, -1, -1, -1, 1];
 
-
 /// Query profile. Can be reused across alignments if aligning one sequence against many others.
 pub struct Profile<'read> {
     sequence: &'read [u8],
@@ -38,11 +37,13 @@ impl<'read> Profile<'read> {
 
         let read_num = Self::sequence_to_numeric(read);
         let raw = unsafe {
-            ssw_init(read_num.as_ptr(),
-                     read_num.len() as i32,
-                     matrix.as_ptr(),
-                     5,
-                     2)
+            ssw_init(
+                read_num.as_ptr(),
+                read_num.len() as i32,
+                matrix.as_ptr(),
+                5,
+                2,
+            )
         };
 
         // we need to store the numeric version of the sequence with the profile to make sure
@@ -59,21 +60,22 @@ impl<'read> Profile<'read> {
     /// sequence argument, returning the only the score. `gap_open` and `gap_extend` should be
     /// positive numbers which will be subtracted from the overall score.
     pub fn align_score(&self, reference: &[u8], gap_open: u8, gap_extend: u8) -> u16 {
-
         assert!(reference.len() > 0);
 
         let reference_numeric = Self::sequence_to_numeric(reference);
 
         let alignment = unsafe {
-            ssw_align(self.raw_profile,
-                      reference_numeric.as_ptr() as *const i8,
-                      reference_numeric.len() as i32,
-                      gap_open,
-                      gap_extend,
-                      0,
-                      0,
-                      0,
-                      (self.sequence.len() / 2) as i32)
+            ssw_align(
+                self.raw_profile,
+                reference_numeric.as_ptr() as *const i8,
+                reference_numeric.len() as i32,
+                gap_open,
+                gap_extend,
+                0,
+                0,
+                0,
+                (self.sequence.len() / 2) as i32,
+            )
         };
 
         unsafe {
@@ -130,23 +132,25 @@ struct RawAlign {
 }
 
 extern "C" {
-    fn ssw_init(read: *const i8,
-                readLen: i32,
-                mat: *const i8,
-                n: i32,
-                score_size: i8)
-                -> *const RawProfile;
+    fn ssw_init(
+        read: *const i8,
+        readLen: i32,
+        mat: *const i8,
+        n: i32,
+        score_size: i8,
+    ) -> *const RawProfile;
 
-    fn ssw_align(profile: *const RawProfile,
-                 reference: *const i8,
-                 ref_len: i32,
-                 gap_open: u8,
-                 gap_extend: u8,
-                 flag: u8,
-                 filters: u16,
-                 filterd: i32,
-                 mask_len: i32)
-                 -> *const RawAlign;
+    fn ssw_align(
+        profile: *const RawProfile,
+        reference: *const i8,
+        ref_len: i32,
+        gap_open: u8,
+        gap_extend: u8,
+        flag: u8,
+        filters: u16,
+        filterd: i32,
+        mask_len: i32,
+    ) -> *const RawAlign;
 
     fn init_destroy(p: *const RawProfile);
     fn align_destroy(a: *const RawAlign);
@@ -166,10 +170,10 @@ extern crate quickcheck;
 #[cfg(test)]
 mod test {
 
+    use super::*;
     use arbitrary_dna::Dna5Sequence;
     use bio::alignment::pairwise::Aligner;
     use std::str;
-    use super::*;
 
     quickcheck! {
         fn matches_rust_bio(query: Dna5Sequence,

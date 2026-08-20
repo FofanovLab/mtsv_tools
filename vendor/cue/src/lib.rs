@@ -21,7 +21,7 @@
 //! }
 //! ```
 
-#[cfg(feature="log")]
+#[cfg(feature = "log")]
 #[macro_use]
 extern crate log;
 
@@ -42,16 +42,18 @@ enum WorkResult<T> {
     WorkerTerminated,
 }
 
-pub fn pipeline<Q, R, QF, JF, W>(name: &str,
-                                 num_workers: usize,
-                                 work: W,
-                                 worker: QF,
-                                 mut joiner: JF)
-    where Q: Send + Sized,
-          R: Send + Sized,
-          QF: Fn(Q) -> R + Sync,
-          JF: FnMut(R) + Send + Sync,
-          W: Iterator<Item = Q>
+pub fn pipeline<Q, R, QF, JF, W>(
+    name: &str,
+    num_workers: usize,
+    work: W,
+    worker: QF,
+    mut joiner: JF,
+) where
+    Q: Send + Sized,
+    R: Send + Sized,
+    QF: Fn(Q) -> R + Sync,
+    JF: FnMut(R) + Send + Sync,
+    W: Iterator<Item = Q>,
 {
     let results = MsQueue::<WorkResult<R>>::new();
     let queries = LinkedQueue::<WorkItem<Q>>::with_capacity(num_workers * 20);
@@ -63,15 +65,13 @@ pub fn pipeline<Q, R, QF, JF, W>(name: &str,
             let mut num_processed = 0;
 
             while num_ended < num_workers {
-
                 match results.pop() {
-
                     WorkResult::Available(result) => {
                         joiner(result);
 
                         num_processed += 1;
                         log(name, num_processed);
-                    }
+                    },
 
                     WorkResult::WorkerTerminated => num_ended += 1,
                 }
@@ -81,10 +81,8 @@ pub fn pipeline<Q, R, QF, JF, W>(name: &str,
         // workers
         for _ in 0..num_workers {
             scope.spawn(|| {
-
                 // note that this blocks if the buffer is empty
                 while let WorkItem::Available(query) = queries.take() {
-
                     let result = worker(query);
                     results.push(WorkResult::Available(result));
                 }
@@ -106,28 +104,34 @@ pub fn pipeline<Q, R, QF, JF, W>(name: &str,
     });
 }
 
-#[cfg(feature="log")]
+#[cfg(feature = "log")]
 fn log(name: &str, num_done: usize) {
     if num_done % 10_000 == 0 {
         debug!("{} pipeline has processed {} work items.", name, num_done);
     }
 }
 
-#[cfg(not(feature="log"))]
+#[cfg(not(feature = "log"))]
 fn log(_: &str, _: usize) {}
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn basic_test() {
-        use std::collections::BTreeMap;
         use super::pipeline;
+        use std::collections::BTreeMap;
 
         let mut results = BTreeMap::new();
 
-        pipeline("test123", 4, (0..100_000), |n| (n, n * 5), |r| {
-            results.insert(r.0, r.1);
-        });
+        pipeline(
+            "test123",
+            4,
+            (0..100_000),
+            |n| (n, n * 5),
+            |r| {
+                results.insert(r.0, r.1);
+            },
+        );
 
         for i in 0..100 {
             assert!(Some(&(i * 5)) == results.get(&i));

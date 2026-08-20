@@ -1,20 +1,20 @@
 #[macro_use]
 extern crate log;
 
+extern crate bio;
 extern crate clap;
 extern crate flate2;
-extern crate bio;
 extern crate mtsv;
 
+use bio::io::{fasta, fastq};
 use clap::{App, Arg};
 use flate2::read::MultiGzDecoder;
-use mtsv::util;
 use mtsv::io::result_read_id;
+use mtsv::util;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
-use bio::io::{fasta, fastq};
 
 fn open_maybe_gz(path: &str) -> Result<Box<dyn Read>, std::io::Error> {
     let mut file = File::open(Path::new(path))?;
@@ -45,7 +45,11 @@ fn read_ids_from_results(path: &str) -> Result<HashSet<String>, String> {
     Ok(ids)
 }
 
-fn resume_offset_from_results(results_path: &str, input_path: &str, input_type: &str) -> Result<usize, String> {
+fn resume_offset_from_results(
+    results_path: &str,
+    input_path: &str,
+    input_type: &str,
+) -> Result<usize, String> {
     let ids = read_ids_from_results(results_path)?;
     let input_type = input_type.to_ascii_uppercase();
     let mut last_idx: Option<usize> = None;
@@ -78,28 +82,36 @@ fn main() {
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about("Find the read offset of the last read present in mtsv results.")
-        .arg(Arg::with_name("RESULTS")
-            .long("results")
-            .takes_value(true)
-            .required(true)
-            .help("Path to mtsv results file."))
-        .arg(Arg::with_name("FASTA")
-            .short("fa")
-            .long("fasta")
-            .help("Path to FASTA reads.")
-            .takes_value(true)
-            .required_unless("FASTQ")
-            .conflicts_with("FASTQ"))
-        .arg(Arg::with_name("FASTQ")
-            .short("fq")
-            .long("fastq")
-            .help("Path to FASTQ reads.")
-            .takes_value(true)
-            .required_unless("FASTA")
-            .conflicts_with("FASTA"))
-        .arg(Arg::with_name("VERBOSE")
-            .short("v")
-            .help("Include this flag to trigger debug-level logging."))
+        .arg(
+            Arg::with_name("RESULTS")
+                .long("results")
+                .takes_value(true)
+                .required(true)
+                .help("Path to mtsv results file."),
+        )
+        .arg(
+            Arg::with_name("FASTA")
+                .short("fa")
+                .long("fasta")
+                .help("Path to FASTA reads.")
+                .takes_value(true)
+                .required_unless("FASTQ")
+                .conflicts_with("FASTQ"),
+        )
+        .arg(
+            Arg::with_name("FASTQ")
+                .short("fq")
+                .long("fastq")
+                .help("Path to FASTQ reads.")
+                .takes_value(true)
+                .required_unless("FASTA")
+                .conflicts_with("FASTA"),
+        )
+        .arg(
+            Arg::with_name("VERBOSE")
+                .short("v")
+                .help("Include this flag to trigger debug-level logging."),
+        )
         .get_matches();
 
     util::init_logging(if args.is_present("VERBOSE") {
@@ -118,10 +130,10 @@ fn main() {
     match resume_offset_from_results(results_path, input_path, input_type) {
         Ok(offset) => {
             println!("{}", offset);
-        }
+        },
         Err(why) => {
             error!("Error computing resume offset: {}", why);
             std::process::exit(2);
-        }
+        },
     }
 }
