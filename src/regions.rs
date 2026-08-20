@@ -296,6 +296,12 @@ fn collect_hits<R: BufRead>(
                     sample
                 )));
             }
+            if record.hits.iter().any(|hit| hit.gi == Gi(0)) {
+                return Err(MtsvError::AnyhowError(format!(
+                    "Sample '{}' contains assignments without usable sequence IDs; table output converted from default inline assignments cannot be used for region generation",
+                    sample
+                )));
+            }
             stats.reads += 1;
             stats.hits += record.hits.len();
             for hit in record.hits {
@@ -537,6 +543,44 @@ mod tests {
     }
 
     #[test]
+    fn generated_region_summary_feeds_multi_index_extraction() {
+        let assignments = "read_id\tread_length\ttaxa\tGID\tposition\tedit_distance\n\
+                           read\t4\t2\t10\t2\t0\n";
+        let mut samples = vec![(
+            "sample".to_string(),
+            BufReader::new(Cursor::new(assignments)),
+        )];
+        let mut summary = Vec::new();
+        write_assignment_regions(&mut samples, &mut summary, &mut vec![Vec::new()], 10, 1).unwrap();
+        let mut summary_file = NamedTempFile::new().unwrap();
+        summary_file.write_all(&summary).unwrap();
+        let requests = read_region_summary(summary_file.path()).unwrap();
+
+        let irrelevant_index = NamedTempFile::new().unwrap();
+        let matching_index = NamedTempFile::new().unwrap();
+        write_index_to_file(
+            &MGIndex::new(database(9, 90, b"TTTTTTTT"), 2, 2),
+            irrelevant_index.path().to_str().unwrap(),
+        )
+        .unwrap();
+        write_index_to_file(
+            &MGIndex::new(database(2, 10, b"ACGTACGT"), 2, 2),
+            matching_index.path().to_str().unwrap(),
+        )
+        .unwrap();
+        let mut fasta = Vec::new();
+        let stats = extract_region_sequences(
+            &requests,
+            &[irrelevant_index.path(), matching_index.path()],
+            &mut fasta,
+            TaxonomySource::Primary,
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8(fasta).unwrap(), ">r_000001\nCGT\n");
+        assert_eq!(stats.indices_loaded, 2);
+    }
+
+    #[test]
     fn merges_by_taxon_and_sequence_and_counts_samples() {
         let first = "a:2-10-100=1\nb:2-10-108=2\n";
         let second = "read_id\tread_length\ttaxa\tGID\tposition\tedit_distance\n\
@@ -579,5 +623,16 @@ mod tests {
             0
         )
         .is_err());
+    }
+
+    #[test]
+    fn rejects_table_conversion_without_locus_metadata() {
+        let input = "read_id\tread_length\ttaxa\tGID\tposition\tedit_distance\n\
+                     read\t0\t2\t0\t0\t1\n";
+        let mut samples = vec![("sample".to_string(), BufReader::new(Cursor::new(input)))];
+        let error =
+            write_assignment_regions(&mut samples, &mut Vec::new(), &mut vec![Vec::new()], 10, 0)
+                .unwrap_err();
+        assert!(error.to_string().contains("without usable sequence IDs"));
     }
 }
