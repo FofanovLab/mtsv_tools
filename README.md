@@ -520,6 +520,9 @@ OPTIONS:
 `mtsv-regions` groups locus-bearing assignment hits from multiple samples into reference regions.
 It accepts table output and long inline output (`taxid-GID-position=edit`). Default inline output
 (`taxid=edit`) is rejected because it does not contain sequence IDs or positions.
+Table files produced by converting default inline input in `mtsv-filter` contain zero placeholders
+for unavailable loci and are likewise rejected; use original binner table or long output when
+region generation is required.
 
 Each input path represents one sample:
 

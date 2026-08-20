@@ -100,7 +100,9 @@ pub fn filter_results<R: BufRead, W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collapse::{collapse_edit_files, CollapseMode};
     use crate::index::Gi;
+    use crate::io::parse_result_record;
     use std::io::{BufReader, Cursor};
 
     fn hit(taxid: u32, edit: u32) -> Hit {
@@ -154,5 +156,85 @@ mod tests {
         assert!(output.contains("r1\t100\t2;3\t10;11\t4;5\t1;5"));
         assert!(output.contains("r2\t0\t4\t12\t6\t2"));
         assert_eq!(stats.reads_written, 2);
+    }
+
+    #[test]
+    fn all_assignment_inputs_convert_to_inline_and_table() {
+        let inputs = [
+            "read:2=1,3=4\n",
+            "read:2-10-5=1,3-11-6=4\n",
+            "read_id\tread_length\ttaxa\tGID\tposition\tedit_distance\n\
+             read\t100\t2;3\t10;11\t5;6\t1;4\n",
+        ];
+        for input in &inputs {
+            for &format in &[
+                AssignmentOutputFormat::Default,
+                AssignmentOutputFormat::Table,
+            ] {
+                let mut readers = vec![BufReader::new(Cursor::new(*input))];
+                let mut output = Vec::new();
+                filter_results(
+                    &mut readers,
+                    &mut output,
+                    &HitFilterConfig {
+                        max_edit: Some(2),
+                        ..Default::default()
+                    },
+                    format,
+                )
+                .unwrap();
+                let output = String::from_utf8(output).unwrap();
+                let record = output
+                    .lines()
+                    .filter_map(|line| parse_result_record(line).unwrap())
+                    .next()
+                    .unwrap();
+                assert_eq!(record.read_id, "read");
+                assert_eq!(record.hits.len(), 1);
+                assert_eq!(record.hits[0].tax_id, TaxId(2));
+                assert_eq!(record.hits[0].edit, 1);
+                assert_eq!(
+                    record.read_length,
+                    if format == AssignmentOutputFormat::Table {
+                        Some(if input.starts_with("read_id") { 100 } else { 0 })
+                    } else {
+                        None
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn filtered_table_output_can_be_collapsed_with_long_inline() {
+        let table = "read_id\tread_length\ttaxa\tGID\tposition\tedit_distance\n\
+                     read\t100\t2;3\t10;11\t5;6\t1;4\n";
+        let mut filter_readers = vec![BufReader::new(Cursor::new(table))];
+        let mut filtered = Vec::new();
+        filter_results(
+            &mut filter_readers,
+            &mut filtered,
+            &HitFilterConfig {
+                max_edit: Some(2),
+                ..Default::default()
+            },
+            AssignmentOutputFormat::Table,
+        )
+        .unwrap();
+
+        let long = b"read:2-10-4=2,4-12-9=3\n".to_vec();
+        let mut collapse_inputs = vec![Cursor::new(filtered), Cursor::new(long)];
+        let mut collapsed = Vec::new();
+        collapse_edit_files(
+            &mut collapse_inputs,
+            &mut collapsed,
+            CollapseMode::TaxIdGi,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(collapsed).unwrap(),
+            "read:2-10-5=1,4-12-9=3\n"
+        );
     }
 }

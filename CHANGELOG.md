@@ -1,40 +1,55 @@
 # Changelog
 
-* Added `mtsv-filter` for ordered per-read TaxID inclusion/exclusion from text files, maximum-edit,
-  and best-hit edit-delta filtering across inline, long, table, and mixed binner outputs.
-* Added `mtsv-regions` to merge locus-bearing assignment hits across sample files and write
-  region summaries plus compact, automatically named per-sample read-to-region mappings.
-* Added `mtsv-region-extract` to intersect region summaries with multiple sequentially loaded
-  indices and extract clipped intervals using region IDs as FASTA headers.
-
-## [2.1.1] – 2026-03-11
-
-### Fixed
-
-* Gzipped input handling now reads all gzip members (not just the first) in:
-  * `mtsv-binner`
-  * `mtsv-partition`
-  * `mtsv-resume-point`
-  * shared binner input path (`src/binner.rs`)
-* This resolves cases where only a fraction of reads were processed from some `.fastq.gz` / `.fasta.gz` inputs.
-
-### Changed
-
-* `mtsv-partition` now emits explicit run statistics on completion:
-  * `processed`
-  * `matched`
-  * `unmatched`
-  * `last_index`
-* `mtsv-partition` now logs read/write failure context with read index and counters before exiting.
-* `mtsv-partition` now writes compressed output when `--matched` / `--unmatched` paths end with `.gz`.
-* `mtsv-collapse --report` now writes percentage columns with 6 decimal places (previously 2).
+## [Unreleased]
 
 ### Added
 
-* `mtsv-binner --output-format table` writes headered TSV assignments with read length and compact,
-  parallel taxid/GID/position/edit-distance lists.
-* Result readers used by collapse, partition, and resume now automatically accept legacy and table
-  formats, including mixed collapse inputs.
+* Added opt-in adaptive seeding to `mtsv-binner`, including minimum/maximum seed lengths, target
+  hit count, and seed-length step controls. Fixed seeding remains the default.
+* Added `mtsv-binner --debug-stats` with per-read-orientation timing, seed, candidate, alignment,
+  and assignment measurements.
+* Added independent limits for candidates checked, distinct assigned TaxIDs, and successful
+  alignments per TaxID.
+* Added headered table assignment output containing read length and parallel
+  TaxID/GID/position/edit-distance lists.
+* Added dual-taxonomy indices:
+  * FASTA headers may use `SEQID-PRIMARY_TAXID-ALTERNATE_TAXID`.
+  * Mapping files may include an optional `alternate_taxid` column.
+  * `mtsv-binner --taxonomy-source primary|alternate` controls both output IDs and taxon-based
+    stopping limits.
+  * Alternate taxonomy metadata is appended without changing the legacy serialized index payload.
+* Added multi-file index construction. `mtsv-build --fasta` accepts multiple files, and
+  `--fasta-list` accepts one path per line with comments, blank lines, and relative paths.
+* Added `mtsv-filter` for ordered per-read filtering by included TaxIDs, excluded TaxIDs,
+  maximum edit distance, and distance from the best remaining hit. TaxID selections are read from
+  text files, and inline, long, table, and mixed inputs are supported.
+* Added `mtsv-regions` to merge locus-bearing hits across sample assignment files, write compact
+  region summaries, and create automatically named per-sample read-to-region tables.
+* Added `mtsv-region-extract` to intersect region summaries with multiple sequentially loaded
+  indices and extract clipped intervals using region IDs as FASTA headers.
+* Added `mtsv-reference-list` for reporting index number, TaxID, sequence ID, and sequence length.
+* Added single-region and batch-region extraction to `mtsv-reference` using zero-based, half-open
+  coordinates.
+
+### Changed
+
+* Result readers used by collapse, partition, resume, and filtering now automatically accept
+  legacy and table formats; collapse also accepts mixed-format inputs.
+* `mtsv-collapse --mode taxid-gi` retains minimum edit distance per TaxID/GID pair and preserves
+  reference offsets when available.
+* `mtsv-partition` now:
+  * Emits `processed`, `matched`, `unmatched`, and `last_index` run statistics.
+  * Logs read/write failure context with read index and counters.
+  * Writes compressed output when `--matched` or `--unmatched` ends in `.gz`.
+* `mtsv-collapse --report` writes percentage columns with six decimal places instead of two.
+* Documentation now distinguishes paired-read workflows, describes all assignment formats, and
+  documents filtering, region generation, region extraction, and reference inspection.
+
+### Fixed
+
+* Gzipped FASTA/FASTQ handling now reads every gzip member in `mtsv-binner`, `mtsv-partition`,
+  `mtsv-resume-point`, and the shared binner input path. This prevents truncated processing of
+  concatenated or multi-member gzip inputs.
 
 ## [2.1.0] – 2026-02-16
 
