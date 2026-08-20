@@ -9,40 +9,47 @@ extern crate mtsv;
 
 use bio::io::fasta;
 use clap::{App, Arg};
-use std::path::Path;
 use mtsv::chunk::write_db_chunks;
 use mtsv::io::parse_fasta_db;
 use mtsv::util;
+use std::path::Path;
 
 fn main() {
     let args = App::new("mtsv-chunk")
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about("Split a FASTA reference database into chunks for index generation.")
-        .arg(Arg::with_name("OUTPUT")
-            .help("Folder path to write split output files to.")
-            .short("o")
-            .long("output")
-            .takes_value(true)
-            .required(true))
-        .arg(Arg::with_name("INPUT")
-            .help("Path(s) to vedro results files to collapse")
-            .short("i")
-            .long("input")
-            .takes_value(true)
-            .required(true))
-        .arg(Arg::with_name("SIZE_GB")
-            .help("Chunk size (in gigabytes).")
-            .short("g")
-            .long("gb")
-            .default_value("10")
-            .takes_value(true)
-            .required(true))
-        .arg(Arg::with_name("VERBOSE")
-            .short("v")
-            .help("Include this flag to trigger debug-level logging."))
+        .arg(
+            Arg::with_name("OUTPUT")
+                .help("Folder path to write split output files to.")
+                .short("o")
+                .long("output")
+                .takes_value(true)
+                .required(true),
+        )
+        .arg(
+            Arg::with_name("INPUT")
+                .help("Path(s) to vedro results files to collapse")
+                .short("i")
+                .long("input")
+                .takes_value(true)
+                .required(true),
+        )
+        .arg(
+            Arg::with_name("SIZE_GB")
+                .help("Chunk size (in gigabytes).")
+                .short("g")
+                .long("gb")
+                .default_value("10")
+                .takes_value(true)
+                .required(true),
+        )
+        .arg(
+            Arg::with_name("VERBOSE")
+                .short("v")
+                .help("Include this flag to trigger debug-level logging."),
+        )
         .get_matches();
-
 
     // setup logger
     util::init_logging(if args.is_present("VERBOSE") {
@@ -59,17 +66,18 @@ fn main() {
         None => panic!("{} is not a valid file.", database),
     };
 
-    info!("Will write files as {}_0.fasta, {}_1.fasta, etc. in output path.",
-          base_name,
-          base_name);
+    info!(
+        "Will write files as {}_0.fasta, {}_1.fasta, etc. in output path.",
+        base_name, base_name
+    );
 
     let chunks_gb = args.value_of("SIZE_GB").unwrap();
-    let chunks_gb = chunks_gb.parse::<f32>()
-        .unwrap_or_else(|_| {
-            chunks_gb.parse::<u32>()
-                .map(|u| u as f32)
-                .expect("Unable to parse SIZE_GB as a valid number.")
-        });
+    let chunks_gb = chunks_gb.parse::<f32>().unwrap_or_else(|_| {
+        chunks_gb
+            .parse::<u32>()
+            .map(|u| u as f32)
+            .expect("Unable to parse SIZE_GB as a valid number.")
+    });
 
     if chunks_gb <= 0.0 {
         panic!("Unable to write negatively sized database chunks.");

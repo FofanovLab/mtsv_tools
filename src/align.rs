@@ -50,7 +50,6 @@ impl Aligner {
 
         for row in 1..(p.len() + 1) {
             for col in 1..(t.len() + 1) {
-
                 unsafe {
                     // let needle_char = p[row - 1];
                     // let haystack_char = t[col - 1];
@@ -67,15 +66,15 @@ impl Aligner {
 
                     // d[(row * row_mult) + col] = min(d[diag] + delta, min(d[up] + 1, d[left] +
                     // 1));
-                    let new_current = min(*d.get_unchecked(diag) + delta,
-                                          min(*d.get_unchecked(up) + 1,
-                                              *d.get_unchecked(left) + 1));
+                    let new_current = min(
+                        *d.get_unchecked(diag) + delta,
+                        min(*d.get_unchecked(up) + 1, *d.get_unchecked(left) + 1),
+                    );
 
                     let current = d.get_unchecked_mut((row * row_mult) + col);
 
                     *current = new_current;
                 }
-
             }
         }
 

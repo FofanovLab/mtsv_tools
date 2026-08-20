@@ -26,12 +26,11 @@ extern crate chrono;
 extern crate clap;
 extern crate cue;
 extern crate env_logger;
-extern crate itertools;
 extern crate flate2;
+extern crate itertools;
 
-extern crate ssw;
 extern crate serde;
-
+extern crate ssw;
 
 #[cfg(test)]
 #[macro_use]
@@ -46,6 +45,9 @@ pub mod builder;
 pub mod chunk;
 pub mod collapse;
 pub mod error;
+pub mod filter;
 pub mod index;
 pub mod io;
+pub mod reference;
+pub mod regions;
 pub mod util;

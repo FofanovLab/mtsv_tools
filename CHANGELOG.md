@@ -1,5 +1,12 @@
 # Changelog
 
+* Added `mtsv-filter` for ordered per-read TaxID inclusion/exclusion from text files, maximum-edit,
+  and best-hit edit-delta filtering across inline, long, table, and mixed binner outputs.
+* Added `mtsv-regions` to merge locus-bearing assignment hits across sample files and write
+  region summaries plus compact, automatically named per-sample read-to-region mappings.
+* Added `mtsv-region-extract` to intersect region summaries with multiple sequentially loaded
+  indices and extract clipped intervals using region IDs as FASTA headers.
+
 ## [2.1.1] – 2026-03-11
 
 ### Fixed
@@ -21,6 +28,13 @@
 * `mtsv-partition` now logs read/write failure context with read index and counters before exiting.
 * `mtsv-partition` now writes compressed output when `--matched` / `--unmatched` paths end with `.gz`.
 * `mtsv-collapse --report` now writes percentage columns with 6 decimal places (previously 2).
+
+### Added
+
+* `mtsv-binner --output-format table` writes headered TSV assignments with read length and compact,
+  parallel taxid/GID/position/edit-distance lists.
+* Result readers used by collapse, partition, and resume now automatically accept legacy and table
+  formats, including mixed collapse inputs.
 
 ## [2.1.0] – 2026-02-16
 

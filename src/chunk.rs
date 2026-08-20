@@ -7,15 +7,17 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 /// Write database sequences to a series of files
-pub fn write_db_chunks(records: &Database,
-                       base_filename: &str,
-                       out_path: &Path,
-                       chunk_gbs: f32)
-                       -> MtsvResult<Vec<PathBuf>> {
-
+pub fn write_db_chunks(
+    records: &Database,
+    base_filename: &str,
+    out_path: &Path,
+    chunk_gbs: f32,
+) -> MtsvResult<Vec<PathBuf>> {
     if !out_path.is_dir() {
-        return Err(MtsvError::MissingFile(format!("{} is not a directory",
-                                                   out_path.to_string_lossy())));
+        return Err(MtsvError::MissingFile(format!(
+            "{} is not a directory",
+            out_path.to_string_lossy()
+        )));
     }
 
     let mut chunk_num = 0;
@@ -66,16 +68,15 @@ pub fn write_db_chunks(records: &Database,
 
 #[cfg(test)]
 mod test {
-    use bio::io::fasta;
-    use crate::index::{Database, random_database};
+    use super::*;
+    use crate::index::{random_database, Database};
     use crate::io::parse_fasta_db;
-    use tempfile::{NamedTempFile, tempdir};
+    use bio::io::fasta;
     use std::fmt::Debug;
     use std::path::Path;
-    use super::*;
+    use tempfile::{tempdir, NamedTempFile};
 
     fn collect_chunks<P: AsRef<Path> + Debug>(paths: &[P]) -> Database {
-
         let mut overall = Database::new();
 
         for path in paths {
@@ -95,7 +96,7 @@ mod test {
     fn chunk_roundtrip() {
         let db = random_database(100, 200, 500, 10_000);
 
-        let dir  = tempdir().unwrap();
+        let dir = tempdir().unwrap();
         let dir = dir.path().to_path_buf();
 
         let chunks = write_db_chunks(&db, "tmp_fasta", &dir, 0.001).unwrap();

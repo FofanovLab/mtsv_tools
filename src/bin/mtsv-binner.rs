@@ -16,6 +16,9 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use mtsv::binner;
+use mtsv::binner::AssignmentOutputFormat;
+use mtsv::index::{AdaptiveSeedingConfig, TaxonomySource};
+use mtsv::io::result_read_id;
 use mtsv::util;
 
 fn main() {
@@ -71,6 +74,32 @@ fn main() {
             .takes_value(true)
             .help("Set seed size.")
             .default_value("18"))
+        .arg(Arg::with_name("SEEDING_MODE")
+            .long("seeding-mode")
+            .takes_value(true)
+            .possible_values(&["fixed", "adaptive"])
+            .help("Seed selection strategy. Adaptive uses variable-length seeds based on FM-index hit counts.")
+            .default_value("fixed"))
+        .arg(Arg::with_name("ADAPTIVE_MIN_SEED_SIZE")
+            .long("adaptive-min-seed-size")
+            .takes_value(true)
+            .help("Smallest seed allowed when adaptive seeding rescues a seed with no exact hits.")
+            .default_value("16"))
+        .arg(Arg::with_name("ADAPTIVE_MAX_SEED_SIZE")
+            .long("adaptive-max-seed-size")
+            .takes_value(true)
+            .help("Largest seed allowed when adaptive seeding reduces repetitive hits.")
+            .default_value("30"))
+        .arg(Arg::with_name("ADAPTIVE_TARGET_HITS")
+            .long("adaptive-target-hits")
+            .takes_value(true)
+            .help("Lengthen adaptive seeds while they have more than this many index hits.")
+            .default_value("100"))
+        .arg(Arg::with_name("ADAPTIVE_STEP")
+            .long("adaptive-step")
+            .takes_value(true)
+            .help("Number of bases added or removed per adaptive seed-length probe.")
+            .default_value("2"))
         .arg(Arg::with_name("SEED_INTERVAL")
             .long("seed-interval")
             .takes_value(true)
@@ -95,7 +124,12 @@ fn main() {
         .arg(Arg::with_name("MAX_ASSIGNMENTS")
             .long("max-assignments")
             .takes_value(true)
-            .help("Stop after this many successful assignments per read."))
+            .help("Stop after this many distinct taxids have successful alignments per read."))
+        .arg(Arg::with_name("MAX_ALIGNMENTS_PER_TAXID")
+            .long("max-alignments-per-taxid")
+            .takes_value(true)
+            .help("Stop aligning candidates for a taxid after this many successful alignments per read and orientation.")
+            .default_value("1"))
         .arg(Arg::with_name("MAX_CANDIDATES")
             .long("max-candidates")
             .takes_value(true)
@@ -108,9 +142,19 @@ fn main() {
         .arg(Arg::with_name("OUTPUT_FORMAT")
             .long("output-format")
             .takes_value(true)
-            .possible_values(&["default", "long"])
-            .help("Output format: default (taxid=edit) or long (taxid-gi-offset=edit).")
+            .possible_values(&["default", "long", "table"])
+            .help("Output format: default, long (taxid-GID-position=edit), or headered table TSV.")
             .default_value("default"))
+        .arg(Arg::with_name("TAXONOMY_SOURCE")
+            .long("taxonomy-source")
+            .takes_value(true)
+            .possible_values(&["primary", "alternate"])
+            .help("Taxonomy ID field used for output and taxon-based stopping limits.")
+            .default_value("primary"))
+        .arg(Arg::with_name("DEBUG_STATS")
+            .long("debug-stats")
+            .takes_value(true)
+            .help("Write per-read, per-orientation benchmark statistics as TSV to this path."))
         .get_matches();
 
     // setup logger
@@ -169,6 +213,48 @@ fn main() {
                 seed_size
             },
             None => panic!("Missing parameter: seed-size"),
+        };
+
+        let adaptive_seeding = if args.value_of("SEEDING_MODE") == Some("adaptive") {
+            let min_seed_length = args
+                .value_of("ADAPTIVE_MIN_SEED_SIZE")
+                .unwrap()
+                .parse::<usize>()
+                .expect("Invalid adaptive minimum seed size!");
+            let max_seed_length = args
+                .value_of("ADAPTIVE_MAX_SEED_SIZE")
+                .unwrap()
+                .parse::<usize>()
+                .expect("Invalid adaptive maximum seed size!");
+            let target_hits = args
+                .value_of("ADAPTIVE_TARGET_HITS")
+                .unwrap()
+                .parse::<usize>()
+                .expect("Invalid adaptive target hit count!");
+            let length_step = args
+                .value_of("ADAPTIVE_STEP")
+                .unwrap()
+                .parse::<usize>()
+                .expect("Invalid adaptive seed step!");
+            if min_seed_length == 0 || min_seed_length > seed_size || seed_size > max_seed_length {
+                panic!("Adaptive seed sizes must satisfy 0 < minimum <= seed-size <= maximum");
+            }
+            if target_hits == 0 || length_step == 0 {
+                panic!("Adaptive target hits and step must be greater than zero");
+            }
+            info!(
+                "Adaptive seeding: min={}, initial={}, max={}, target hits={}, step={}",
+                min_seed_length, seed_size, max_seed_length, target_hits, length_step
+            );
+            Some(AdaptiveSeedingConfig {
+                min_seed_length: min_seed_length,
+                max_seed_length: max_seed_length,
+                target_hits: target_hits,
+                length_step: length_step,
+            })
+        } else {
+            info!("Fixed seeding mode");
+            None
         };
 
         let seed_gap = match args.value_of("SEED_INTERVAL") {
@@ -235,6 +321,19 @@ fn main() {
             None => None,
         };
 
+        let max_alignments_per_taxid = args
+            .value_of("MAX_ALIGNMENTS_PER_TAXID")
+            .unwrap()
+            .parse::<usize>()
+            .expect("Invalid number entered for max alignments per taxid!");
+        if max_alignments_per_taxid == 0 {
+            panic!("Max alignments per taxid must be greater than zero");
+        }
+        info!(
+            "Max successful alignments per taxid: {}",
+            max_alignments_per_taxid
+        );
+
         let max_candidates_checked = match args.value_of("MAX_CANDIDATES") {
             Some(s) => {
                 let max_candidates = s
@@ -250,10 +349,14 @@ fn main() {
             None => unreachable!(),
         };
 
-        let long_info_output = match args.value_of("OUTPUT_FORMAT") {
-            Some("long") => true,
-            Some("default") => false,
-            _ => false,
+        let output_format = match args.value_of("OUTPUT_FORMAT") {
+            Some("long") => AssignmentOutputFormat::Long,
+            Some("table") => AssignmentOutputFormat::Table,
+            _ => AssignmentOutputFormat::Default,
+        };
+        let taxonomy_source = match args.value_of("TAXONOMY_SOURCE") {
+            Some("alternate") => TaxonomySource::Alternate,
+            _ => TaxonomySource::Primary,
         };
 
         let force_overwrite = args.is_present("FORCE_OVERWRITE");
@@ -264,6 +367,10 @@ fn main() {
                 3
             },
             Some(results_path) => {
+                if args.value_of("DEBUG_STATS") == Some(results_path) {
+                    error!("--debug-stats must not use the same path as --results");
+                    std::process::exit(5);
+                }
                 let append_results = !force_overwrite && Path::new(results_path).exists();
                 if force_overwrite {
                     info!("Forcing overwrite of {}", results_path);
@@ -297,7 +404,7 @@ fn main() {
                     Ok(resume_offset) => {
                         let read_offset = read_offset + resume_offset;
 
-                        match binner::get_fastx_and_write_matching_bin_ids(
+                        match binner::get_fastx_and_write_matching_bin_ids_with_output_format_for_taxonomy(
                             input_path,
                             input_type,
                             index_path,
@@ -311,9 +418,13 @@ fn main() {
                             max_hits,
                             tune_max_hits,
                             max_assignments,
+                            max_alignments_per_taxid,
                             max_candidates_checked,
                             read_offset,
-                            long_info_output,
+                            output_format,
+                            adaptive_seeding,
+                            args.value_of("DEBUG_STATS"),
+                            taxonomy_source,
                         ) {
                             Ok(_) => 0,
                             Err(why) => {
@@ -352,13 +463,9 @@ fn read_ids_from_results(path: &str) -> Result<HashSet<String>, String> {
         if line.trim().is_empty() {
             continue;
         }
-        let mut halves = line.rsplitn(2, ':');
-        let _hits = halves.next().unwrap_or("");
-        let read_id = halves.next().ok_or_else(|| "Missing read id".to_string())?;
-        if read_id.is_empty() {
-            return Err("Missing read id".to_string());
+        if let Some(read_id) = result_read_id(&line).map_err(|e| e.to_string())? {
+            ids.insert(read_id.to_string());
         }
-        ids.insert(read_id.to_string());
     }
     Ok(ids)
 }

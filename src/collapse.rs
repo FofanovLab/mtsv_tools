@@ -3,7 +3,7 @@
 use crate::binner::write_single_line;
 use crate::error::*;
 use crate::index::{Gi, TaxId};
-use crate::io::parse_findings;
+use crate::io::{is_table_result_line, parse_findings, parse_result_record};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::fmt::Write as FmtWrite;
@@ -175,6 +175,28 @@ where
 fn normalize_line(line: &str) -> String {
     let trimmed = line.trim_end_matches(&['\n', '\r'][..]);
     format!("{}\n", trimmed)
+}
+
+fn table_line_as_long(line: &str) -> MtsvResult<Option<String>> {
+    let record = match parse_result_record(line)? {
+        Some(record) => record,
+        None => return Ok(None),
+    };
+    let mut output = String::new();
+    output.push_str(&record.read_id);
+    output.push(':');
+    for (idx, hit) in record.hits.iter().enumerate() {
+        if idx > 0 {
+            output.push(',');
+        }
+        let _ = write!(
+            output,
+            "{}-{}-{}={}",
+            hit.tax_id.0, hit.gi.0, hit.offset, hit.edit
+        );
+    }
+    output.push('\n');
+    Ok(Some(output))
 }
 
 fn split_line(line: &str) -> MtsvResult<(&str, &str)> {
@@ -444,8 +466,15 @@ fn external_sort_file(
         if line.trim().is_empty() {
             continue;
         }
-        let normalized = normalize_line(&line);
-        let read_id = read_id_from_line(&line)?.to_string();
+        let normalized = if is_table_result_line(&line) {
+            match table_line_as_long(&line)? {
+                Some(value) => value,
+                None => continue,
+            }
+        } else {
+            normalize_line(&line)
+        };
+        let read_id = read_id_from_line(&normalized)?.to_string();
         current_bytes += normalized.len();
         records.push((read_id, normalized));
 
@@ -816,5 +845,20 @@ r2:3=1";
         let buf_str = String::from_utf8(buf).unwrap();
         let expected = "r1:1-5-2=4,2-8-1=6\nr2:2-9-1=2\n";
         assert_eq!(expected, &buf_str);
+    }
+
+    #[test]
+    fn collapse_accepts_table_and_legacy_inputs_together() {
+        let table = "read_id\tread_length\ttaxa\tGID\tposition\tedit_distance\n\
+r1\t151\t1;2\t5;8\t3;1\t7;6\n";
+        let legacy = "r1:1-5-2=4\nr2:3-9-1=2\n";
+        let mut buf = Vec::new();
+        let mut infiles = vec![Cursor::new(table), Cursor::new(legacy)];
+
+        collapse_edit_files(&mut infiles, &mut buf, CollapseMode::TaxIdGi, 1).unwrap();
+        assert_eq!(
+            "r1:1-5-2=4,2-8-1=6\nr2:3-9-1=2\n",
+            String::from_utf8(buf).unwrap()
+        );
     }
 }
