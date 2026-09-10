@@ -462,6 +462,9 @@ OPTIONS:
         --mode <MODE>          Collapse mode: taxid (min edit per taxid) or taxid-gi (min edit per taxid-gi). [default:
                                taxid]  [possible values: taxid, taxid-gi]
     -o, --output <OUTPUT>      Path to write combined outupt file to.
+        --output-format <OUTPUT_FORMAT>
+                               Output format: default (comma-separated assignments) or headered table TSV. [default:
+                               default]  [possible values: default, table]
         --report <REPORT>      Write per-taxid stats TSV report.
     -t, --threads <THREADS>    Number of worker threads for sorting. [default: 4]
 

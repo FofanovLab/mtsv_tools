@@ -8,7 +8,9 @@ use clap::{App, Arg};
 use std::fs::File;
 use std::io::BufWriter;
 
-use mtsv::collapse::{collapse_edit_paths, write_taxa_report, CollapseMode};
+use mtsv::collapse::{
+    collapse_edit_paths_with_output_format, write_taxa_report, CollapseMode, CollapseOutputFormat,
+};
 use mtsv::util;
 
 fn main() {
@@ -47,6 +49,12 @@ fn main() {
             .long("report")
             .takes_value(true)
             .help("Write per-taxid stats TSV report."))
+        .arg(Arg::with_name("OUTPUT_FORMAT")
+            .long("output-format")
+            .takes_value(true)
+            .possible_values(&["default", "table"])
+            .default_value("default")
+            .help("Output format: default (comma-separated assignments) or headered table TSV."))
         .get_matches();
 
     // setup logger
@@ -73,8 +81,18 @@ fn main() {
         None => 4,
     };
     let report_path = args.value_of("REPORT");
+    let output_format = match args.value_of("OUTPUT_FORMAT") {
+        Some("table") => CollapseOutputFormat::Table,
+        _ => CollapseOutputFormat::Default,
+    };
 
-    match collapse_edit_paths(&files, &mut outfile, mode, max_threads) {
+    match collapse_edit_paths_with_output_format(
+        &files,
+        &mut outfile,
+        mode,
+        max_threads,
+        output_format,
+    ) {
         Ok(report) => {
             info!(
                 "Successfully collapsed files. Output available in {}",

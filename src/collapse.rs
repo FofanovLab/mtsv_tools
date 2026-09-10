@@ -3,7 +3,7 @@
 use crate::binner::write_single_line;
 use crate::error::*;
 use crate::index::{Gi, TaxId};
-use crate::io::{is_table_result_line, parse_findings, parse_result_record};
+use crate::io::{is_table_result_line, parse_findings, parse_result_record, result_read_id};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::fmt::Write as FmtWrite;
@@ -22,6 +22,17 @@ pub enum CollapseMode {
     /// Collapse hits by taxid + gi.
     TaxIdGi,
 }
+
+/// Output representation for collapsed edit-distance results.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CollapseOutputFormat {
+    /// Legacy `read_id:assignment,...` representation.
+    Default,
+    /// Headered TSV matching `mtsv-binner --output-format table`.
+    Table,
+}
+
+const TABLE_HEADER: &[u8] = b"read_id\tread_length\ttaxa\tGID\tposition\tedit_distance\n";
 /// Parsed hit from an edit distance result line, including taxid, optional gi, optional offset, edit distance, and flags for whether gi and offset were present.
 struct ParsedHit {
     tax_id: TaxId,
@@ -177,28 +188,6 @@ fn normalize_line(line: &str) -> String {
     format!("{}\n", trimmed)
 }
 
-fn table_line_as_long(line: &str) -> MtsvResult<Option<String>> {
-    let record = match parse_result_record(line)? {
-        Some(record) => record,
-        None => return Ok(None),
-    };
-    let mut output = String::new();
-    output.push_str(&record.read_id);
-    output.push(':');
-    for (idx, hit) in record.hits.iter().enumerate() {
-        if idx > 0 {
-            output.push(',');
-        }
-        let _ = write!(
-            output,
-            "{}-{}-{}={}",
-            hit.tax_id.0, hit.gi.0, hit.offset, hit.edit
-        );
-    }
-    output.push('\n');
-    Ok(Some(output))
-}
-
 fn split_line(line: &str) -> MtsvResult<(&str, &str)> {
     let trimmed = line.trim_end_matches(&['\n', '\r'][..]);
     let mut halves = trimmed.rsplitn(2, ':');
@@ -213,8 +202,30 @@ fn split_line(line: &str) -> MtsvResult<(&str, &str)> {
 }
 
 fn read_id_from_line(line: &str) -> MtsvResult<&str> {
-    let (read_id, _) = split_line(line)?;
-    Ok(read_id)
+    result_read_id(line)?.ok_or_else(|| MtsvError::InvalidHeader(line.to_string()))
+}
+
+fn parse_result_line(line: &str) -> MtsvResult<(String, Option<usize>, Vec<ParsedHit>)> {
+    if is_table_result_line(line) {
+        let record =
+            parse_result_record(line)?.ok_or_else(|| MtsvError::InvalidHeader(line.to_string()))?;
+        let hits = record
+            .hits
+            .into_iter()
+            .map(|hit| ParsedHit {
+                tax_id: hit.tax_id,
+                gi: hit.gi,
+                offset: hit.offset,
+                edit: hit.edit,
+                has_gi: true,
+                has_offset: true,
+            })
+            .collect();
+        return Ok((record.read_id, record.read_length, hits));
+    }
+
+    let (read_id, hits) = split_line(line)?;
+    Ok((read_id.to_string(), None, parse_hits(hits)?))
 }
 
 fn parse_hit_token(token: &str) -> MtsvResult<ParsedHit> {
@@ -359,6 +370,61 @@ fn write_collapsed_taxid_gi<W: Write>(
     Ok(())
 }
 
+fn write_collapsed_table<W: Write>(
+    header: &str,
+    read_length: usize,
+    mode: CollapseMode,
+    taxid_hits: &HashMap<TaxId, u32>,
+    taxid_gi_hits: &HashMap<(TaxId, Gi), (u32, usize)>,
+    writer: &mut W,
+) -> MtsvResult<()> {
+    let safe_header = header
+        .replace('\t', " ")
+        .replace('\n', " ")
+        .replace('\r', " ");
+    let mut taxa = String::new();
+    let mut gids = String::new();
+    let mut positions = String::new();
+    let mut edits = String::new();
+
+    let mut append = |taxid: TaxId, gi: Gi, position: usize, edit: u32| {
+        if !taxa.is_empty() {
+            taxa.push(';');
+            gids.push(';');
+            positions.push(';');
+            edits.push(';');
+        }
+        let _ = write!(taxa, "{}", taxid.0);
+        let _ = write!(gids, "{}", gi.0);
+        let _ = write!(positions, "{}", position);
+        let _ = write!(edits, "{}", edit);
+    };
+
+    match mode {
+        CollapseMode::TaxId => {
+            let mut items: Vec<_> = taxid_hits.iter().collect();
+            items.sort_by_key(|(taxid, edit)| (taxid.0, **edit));
+            for (&taxid, &edit) in items {
+                append(taxid, Gi(0), 0, edit);
+            }
+        },
+        CollapseMode::TaxIdGi => {
+            let mut items: Vec<_> = taxid_gi_hits.iter().collect();
+            items.sort_by_key(|((taxid, gi), (edit, position))| (taxid.0, gi.0, *position, *edit));
+            for (&(taxid, gi), &(edit, position)) in items {
+                append(taxid, gi, position, edit);
+            }
+        },
+    }
+
+    writeln!(
+        writer,
+        "{}\t{}\t{}\t{}\t{}\t{}",
+        safe_header, read_length, taxa, gids, positions, edits
+    )?;
+    Ok(())
+}
+
 fn create_temp_dir() -> MtsvResult<PathBuf> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -466,14 +532,10 @@ fn external_sort_file(
         if line.trim().is_empty() {
             continue;
         }
-        let normalized = if is_table_result_line(&line) {
-            match table_line_as_long(&line)? {
-                Some(value) => value,
-                None => continue,
-            }
-        } else {
-            normalize_line(&line)
-        };
+        if crate::io::is_table_result_header(&line) {
+            continue;
+        }
+        let normalized = normalize_line(&line);
         let read_id = read_id_from_line(&normalized)?.to_string();
         current_bytes += normalized.len();
         records.push((read_id, normalized));
@@ -573,7 +635,11 @@ fn collapse_sorted_files<W: Write>(
     sorted_paths: &[PathBuf],
     write_to: &mut W,
     mode: CollapseMode,
+    output_format: CollapseOutputFormat,
 ) -> MtsvResult<CollapseReport> {
+    if output_format == CollapseOutputFormat::Table {
+        write_to.write_all(TABLE_HEADER)?;
+    }
     let mut readers = Vec::new();
     for path in sorted_paths {
         readers.push(BufReader::new(File::open(path)?));
@@ -594,34 +660,58 @@ fn collapse_sorted_files<W: Write>(
     }
 
     let mut current_id: Option<String> = None;
+    let mut current_read_length: Option<usize> = None;
     let mut taxid_hits: HashMap<TaxId, u32> = HashMap::new();
     let mut taxid_gi_hits: HashMap<(TaxId, Gi), (u32, usize)> = HashMap::new();
     let mut offset_format: Option<bool> = None;
     let mut report = CollapseReport::default();
 
     while let Some(item) = heap.pop() {
-        let (read_id, hits_str) = split_line(&item.line)?;
-        let read_id = read_id.to_string();
+        let (read_id, read_length, parsed_hits) = parse_result_line(&item.line)?;
 
         if current_id.as_ref().map(|r| r != &read_id).unwrap_or(false) {
             let header = current_id.as_ref().unwrap();
             let summary = aggregate_taxid_summary(mode, &taxid_hits, &taxid_gi_hits);
             record_taxid_stats(&mut report, &summary);
-            match mode {
-                CollapseMode::TaxId => write_collapsed_taxid(header, &taxid_hits, write_to)?,
-                CollapseMode::TaxIdGi => {
-                    let include_offset = offset_format.unwrap_or(false);
-                    write_collapsed_taxid_gi(header, &taxid_gi_hits, write_to, include_offset)?
+            match output_format {
+                CollapseOutputFormat::Table => write_collapsed_table(
+                    header,
+                    current_read_length.unwrap_or(0),
+                    mode,
+                    &taxid_hits,
+                    &taxid_gi_hits,
+                    write_to,
+                )?,
+                CollapseOutputFormat::Default => match mode {
+                    CollapseMode::TaxId => write_collapsed_taxid(header, &taxid_hits, write_to)?,
+                    CollapseMode::TaxIdGi => {
+                        let include_offset = offset_format.unwrap_or(false);
+                        write_collapsed_taxid_gi(header, &taxid_gi_hits, write_to, include_offset)?
+                    },
                 },
             }
             taxid_hits.clear();
             taxid_gi_hits.clear();
+            offset_format = None;
             current_id = Some(read_id.clone());
+            current_read_length = read_length;
         } else if current_id.is_none() {
             current_id = Some(read_id.clone());
+            current_read_length = read_length;
+        } else if let Some(length) = read_length {
+            if current_read_length
+                .map(|existing| existing != length)
+                .unwrap_or(false)
+            {
+                return Err(MtsvError::InvalidHeader(format!(
+                    "Conflicting read lengths for {}",
+                    read_id
+                )));
+            }
+            current_read_length = Some(length);
         }
 
-        for hit in parse_hits(hits_str)? {
+        for hit in parsed_hits {
             match mode {
                 CollapseMode::TaxId => {
                     let entry = taxid_hits.entry(hit.tax_id).or_insert(hit.edit);
@@ -670,11 +760,21 @@ fn collapse_sorted_files<W: Write>(
     if let Some(header) = current_id {
         let summary = aggregate_taxid_summary(mode, &taxid_hits, &taxid_gi_hits);
         record_taxid_stats(&mut report, &summary);
-        match mode {
-            CollapseMode::TaxId => write_collapsed_taxid(&header, &taxid_hits, write_to)?,
-            CollapseMode::TaxIdGi => {
-                let include_offset = offset_format.unwrap_or(false);
-                write_collapsed_taxid_gi(&header, &taxid_gi_hits, write_to, include_offset)?
+        match output_format {
+            CollapseOutputFormat::Table => write_collapsed_table(
+                &header,
+                current_read_length.unwrap_or(0),
+                mode,
+                &taxid_hits,
+                &taxid_gi_hits,
+                write_to,
+            )?,
+            CollapseOutputFormat::Default => match mode {
+                CollapseMode::TaxId => write_collapsed_taxid(&header, &taxid_hits, write_to)?,
+                CollapseMode::TaxIdGi => {
+                    let include_offset = offset_format.unwrap_or(false);
+                    write_collapsed_taxid_gi(&header, &taxid_gi_hits, write_to, include_offset)?
+                },
             },
         }
     }
@@ -689,12 +789,29 @@ pub fn collapse_edit_paths<P: AsRef<Path>, W: Write>(
     mode: CollapseMode,
     max_threads: usize,
 ) -> MtsvResult<CollapseReport> {
+    collapse_edit_paths_with_output_format(
+        paths,
+        write_to,
+        mode,
+        max_threads,
+        CollapseOutputFormat::Default,
+    )
+}
+
+/// Collapse edit-distance result paths using the selected output representation.
+pub fn collapse_edit_paths_with_output_format<P: AsRef<Path>, W: Write>(
+    paths: &[P],
+    write_to: &mut W,
+    mode: CollapseMode,
+    max_threads: usize,
+    output_format: CollapseOutputFormat,
+) -> MtsvResult<CollapseReport> {
     let paths: Vec<PathBuf> = paths.iter().map(|p| p.as_ref().to_path_buf()).collect();
     let temp_dir = create_temp_dir()?;
     let chunk_bytes = 128 * 1024 * 1024;
 
     let sorted_paths = sort_files_in_parallel(&paths, &temp_dir, chunk_bytes, max_threads)?;
-    let report = collapse_sorted_files(&sorted_paths, write_to, mode)?;
+    let report = collapse_sorted_files(&sorted_paths, write_to, mode, output_format)?;
 
     for path in sorted_paths {
         let _ = fs::remove_file(path);
@@ -710,6 +827,27 @@ pub fn collapse_edit_files<R, W>(
     write_to: &mut W,
     mode: CollapseMode,
     max_threads: usize,
+) -> MtsvResult<CollapseReport>
+where
+    R: BufRead,
+    W: Write,
+{
+    collapse_edit_files_with_output_format(
+        files,
+        write_to,
+        mode,
+        max_threads,
+        CollapseOutputFormat::Default,
+    )
+}
+
+/// Collapse edit-distance result readers using the selected output representation.
+pub fn collapse_edit_files_with_output_format<R, W>(
+    files: &mut [R],
+    write_to: &mut W,
+    mode: CollapseMode,
+    max_threads: usize,
+    output_format: CollapseOutputFormat,
 ) -> MtsvResult<CollapseReport>
 where
     R: BufRead,
@@ -732,7 +870,13 @@ where
         temp_paths.push(path);
     }
 
-    let report = collapse_edit_paths(&temp_paths, write_to, mode, max_threads)?;
+    let report = collapse_edit_paths_with_output_format(
+        &temp_paths,
+        write_to,
+        mode,
+        max_threads,
+        output_format,
+    )?;
 
     for path in temp_paths {
         let _ = fs::remove_file(path);
@@ -859,6 +1003,31 @@ r1\t151\t1;2\t5;8\t3;1\t7;6\n";
         assert_eq!(
             "r1:1-5-2=4,2-8-1=6\nr2:3-9-1=2\n",
             String::from_utf8(buf).unwrap()
+        );
+    }
+
+    #[test]
+    fn collapse_can_write_binner_table_format() {
+        let first = "read_id\tread_length\ttaxa\tGID\tposition\tedit_distance\n\
+r1\t151\t1;2\t5;8\t3;1\t7;6\n";
+        let second = "r1:1-5-2=4\nr2:3-9-1=2\n";
+        let mut inputs = vec![Cursor::new(first), Cursor::new(second)];
+        let mut output = Vec::new();
+
+        collapse_edit_files_with_output_format(
+            &mut inputs,
+            &mut output,
+            CollapseMode::TaxIdGi,
+            1,
+            CollapseOutputFormat::Table,
+        )
+        .unwrap();
+
+        assert_eq!(
+            "read_id\tread_length\ttaxa\tGID\tposition\tedit_distance\n\
+r1\t151\t1;2\t5;8\t2;1\t4;6\n\
+r2\t0\t3\t9\t1\t2\n",
+            String::from_utf8(output).unwrap()
         );
     }
 }
